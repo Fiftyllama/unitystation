@@ -25,7 +25,9 @@ public class ChatBubbleManager : MonoBehaviour, IInitialise
 	}
 
 	private List<ChatBubble> chatBubblePool = new List<ChatBubble>();
+	private List<ActionText> actionPool = new List<ActionText>();
 	[SerializeField] private GameObject chatBubblePrefab = null;
+	[SerializeField] private GameObject ActionPrefab = null;
 	[SerializeField] private int initialPoolSize = 10;
 
 
@@ -61,6 +63,13 @@ public class ChatBubbleManager : MonoBehaviour, IInitialise
 	public static void ShowAChatBubble(Transform followTarget, string msg,
 		ChatModifier chatModifier = ChatModifier.None)
 	{
+		//TODO this will prevent emotes from appearing as speech. We should streamline it and simply don't use
+		// the chat api when the message is an emote, instead generate an action message.
+		if ((chatModifier & ChatModifier.Emote) == ChatModifier.Emote)
+		{
+			return;
+		}
+
 		var index = Instance.chatBubblePool.FindIndex(x => x.Target == followTarget);
 
 		if (index != -1)
@@ -75,9 +84,52 @@ public class ChatBubbleManager : MonoBehaviour, IInitialise
 		Instance.GetChatBubbleFromPool().SetupBubble(followTarget, msg, chatModifier);
 	}
 
+
+	/// <summary>
+	/// Display a chat bubble and make it follow a transform target
+	/// </summary>
+	/// <param name="msg">Text to show in the Action</param>
+	public void ShowAction(string msg, GameObject recipient)
+	{
+		var index = actionPool.FindIndex(x => x.Text.text == msg);
+
+		if (index != -1)
+		{
+			actionPool[index].AddMultiplier();
+			return;
+		}
+		GetChatBubbleActionText().SetUp(msg, recipient);
+	}
+
+
+	ActionText GetChatBubbleActionText()
+	{
+		var index = actionPool.FindIndex(x => x.OrNull()?.gameObject.activeInHierarchy == false);
+
+		if (index != -1)
+		{
+			return actionPool[index];
+		}
+		else
+		{
+			var newBubble = SpawnNewActionText();
+			actionPool.Add(newBubble);
+			return newBubble;
+		}
+	}
+
+	ActionText SpawnNewActionText()
+	{
+		var obj = Instantiate(ActionPrefab, Vector3.zero, Quaternion.identity);
+		obj.transform.SetParent(transform, false);
+		obj.SetActive(false);
+		return obj.GetComponent<ActionText>();
+	}
+
+
 	ChatBubble GetChatBubbleFromPool()
 	{
-		var index = chatBubblePool.FindIndex(x => !x.gameObject.activeInHierarchy);
+		var index = chatBubblePool.FindIndex(x => x.gameObject.OrNull()?.activeInHierarchy == false);
 
 		if (index != -1)
 		{
@@ -96,7 +148,6 @@ public class ChatBubbleManager : MonoBehaviour, IInitialise
 		var obj = Instantiate(chatBubblePrefab, Vector3.zero, Quaternion.identity);
 		obj.transform.SetParent(transform,
 			false); // Suggestion by compiler, instead of obj.transform.parent = transform;
-		obj.transform.localScale = Vector3.one * 2f;
 		obj.SetActive(false);
 		return obj.GetComponent<ChatBubble>();
 	}

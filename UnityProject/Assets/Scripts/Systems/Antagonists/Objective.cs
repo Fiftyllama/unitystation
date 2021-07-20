@@ -1,5 +1,7 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
+using Items;
 using UnityEngine;
 
 namespace Antagonists
@@ -45,9 +47,24 @@ namespace Antagonists
 		protected bool Complete;
 
 		/// <summary>
+		/// Whether the Ai job can have this objective
+		/// </summary>
+		public bool aiCanHave;
+
+		/// <summary>
 		/// Check if this objective is possible for a player, defaults to true if not overriden
 		/// </summary>
-		public virtual bool IsPossible(PlayerScript candidate)
+		public bool IsPossible(PlayerScript candidate)
+		{
+			if (aiCanHave == false && candidate.PlayerState == PlayerScript.PlayerStates.Ai)
+			{
+				return false;
+			}
+
+			return IsPossibleInternal(candidate);
+		}
+
+		protected virtual bool IsPossibleInternal(PlayerScript candidate)
 		{
 			return true;
 		}
@@ -75,8 +92,67 @@ namespace Antagonists
 		}
 
 		/// <summary>
+		/// Manually set objective as complete
+		/// </summary>
+		public void SetAsComplete()
+		{
+			Complete = true;
+		}
+
+		/// <summary>
 		/// Defines how to check the completion of the objective.
 		/// </summary>
 		protected abstract bool CheckCompletion();
+
+		/// <summary>
+		/// Checks through all the storage recursively
+		/// </summary>
+		protected bool CheckStorageFor(string name, int count)
+		{
+			return CheckStorage(Owner.body.DynamicItemStorage, default, name) >= count;
+		}
+
+		/// <inheritdoc cref="CheckStorageFor(string, int)"/>
+		protected bool CheckStorageFor(Type component, int count)
+		{
+			return CheckStorage(Owner.body.DynamicItemStorage, component, default) >= count;
+		}
+
+		private int CheckStorage(DynamicItemStorage itemStorage, Type component, string name)
+		{
+			int count = 0;
+			foreach (var slot in itemStorage.GetItemSlots())
+			{
+				count += CheckSlot(slot, component, name);
+			}
+
+			return count;
+		}
+
+		private int CheckSlot(ItemSlot slot, Type component, string name)
+		{
+			if (slot.IsEmpty) return 0;
+
+			//Check if current Item is the one we need
+			if ((component != null && slot.ItemObject.TryGetComponent(component, out _)) ||
+					slot.ItemObject.GetComponent<ItemAttributesV2>()?.InitialName == name)
+			{
+				//If stackable count stack
+				if (slot.ItemObject.TryGetComponent<Stackable>(out var stackable))
+				{
+					return stackable.Amount;
+				}
+
+				return 1;
+			}
+
+			//Check to see if this item has storage, and do checks on that
+			if (slot.ItemObject.TryGetComponent<DynamicItemStorage>(out var itemStorage))
+			{
+				return CheckStorage(itemStorage, component, name);
+			}
+
+			return 0;
+		}
 	}
 }

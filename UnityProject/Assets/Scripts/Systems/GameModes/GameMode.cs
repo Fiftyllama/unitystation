@@ -6,6 +6,9 @@ using DiscordWebhook;
 using UI.CharacterCreator;
 using UnityEngine;
 using UnityEngine.Serialization;
+using NaughtyAttributes;
+using Managers;
+using StationObjectives;
 
 namespace GameModes
 {
@@ -66,25 +69,38 @@ namespace GameModes
 		public float AntagRatio => antagRatio;
 
 		[Tooltip("The minimum amount of antags needed for the game mode to be possible. " +
-		         "If requiresMinAntags is false, the number of chosen antags will be rounded up to this number.")]
+		         "If forceMinAntags is true, the number of chosen antags will be rounded up to this number.")]
 		[SerializeField]
 		[Min(0)]
 		private int minAntags = 0;
 		/// <summary>
 		/// The minimum amount of antags needed for the game mode to be possible.
-		/// If <see cref="requiresMinAntags"/> is false, the number of chosen antags will be rounded up to this number.
+		/// If <see cref="forceMinAntags"/> is true, the number of chosen antags will be rounded up to this number.
 		/// </summary>
 		public int MinAntags => minAntags;
 
-		[Tooltip("Is the game mode possible if the player count multiplied by the antagRatio doesn't meet the minAntags? " +
-		         "E.g. If true, when antagRatio is 0.2 and minAntags is 1, you need at least 5 players to start the game mode.")]
+		[Tooltip("The maximum amount of antags spawned in the gamemode.")]
 		[SerializeField]
-		private bool requiresMinAntags = false;
+		[Min(1)]
+		private int maxAntags = 100;
+		/// <summary>
+		/// The maximum amount of antags spawned in the gamemode.
+		/// If <see cref="forceMinAntags"/> is true, the number of chosen antags will be rounded up to this number.
+		/// </summary>
+		public int MaxAntags => maxAntags;
+
+		[FormerlySerializedAs("requiresMinAntags")]
+		[Tooltip("Is the game mode possible if the player count multiplied by the antagRatio doesn't meet the minAntags? " +
+		         "E.g. If true, when antagRatio is 0.2 and minAntags is 1, you need at least 5 players to start the game mode." +
+		         "If false then it will force minAntags so 1, and then every 5 players after that if antagRatio is 0.2")]
+		[SerializeField]
+		private bool forceMinAntags = false;
 		/// <summary>
 		/// Is the game mode possible if the <see cref="antagRatio"/> doesn't meet the <see cref="minAntags"/>?
 		/// E.g. If true, when antagRatio is 0.2 and minAntags is 1, then you need at least 5 players to start the game mode.
+		/// If false then it will force minAntags so 1, and then every 5 players after that if antagRatio is 0.2
 		/// </summary>
-		public bool RequiresMinAntags => requiresMinAntags;
+		public bool ForceMinAntags => forceMinAntags;
 
 		[Tooltip("Are antags on the same team or are they lone wolves?" +
 		         "Used for the end of round antag report.")]
@@ -104,15 +120,13 @@ namespace GameModes
 		/// </summary>
 		public bool MidRoundAntags => midRoundAntags;
 
-		[FormerlySerializedAs("chooseAntagsBeforeJobs")]
-		[Tooltip("Should antags be allocated a job? If true, will choose antags after allocating jobs.")]
+		[Tooltip("The chance for for every possible mid round antag to spawn after start" +
+		         "E.G If the gamemode needs another antag say we need two but only have one currently, " +
+		         "then every time a player joins they will roll this chance for it. " +
+		         "It is multiplied by the amount of open antag slots." +
+		         "This stops the players from guessing by player numbers when they should join to get the antag")]
 		[SerializeField]
-		private bool allocateJobsToAntags = false;
-		/// <summary>
-		/// Should antags be allocated a job?
-		/// If true, will choose antags after allocating jobs.
-		/// </summary>
-		public bool AllocateJobsToAntags => allocateJobsToAntags;
+		private int midRoundAntagsChance = 25;
 
 		[Tooltip("The possible antagonists for this game mode")]
 		[SerializeField]
@@ -122,8 +136,18 @@ namespace GameModes
 		/// </summary>
 		public List<Antagonist> PossibleAntags => possibleAntags;
 
+		[FormerlySerializedAs("chooseAntagsBeforeJobs")]
+		[Tooltip("Should antags be allocated a job? If true, will choose antags after allocating jobs.")]
+		[SerializeField, BoxGroup("Job Allocation")]
+		private bool allocateJobsToAntags = false;
+		/// <summary>
+		/// Should antags be allocated a job?
+		/// If true, will choose antags after allocating jobs.
+		/// </summary>
+		public bool AllocateJobsToAntags => allocateJobsToAntags;
+
 		[Tooltip("The JobTypes that cannot be chosen as antagonists for this game mode")]
-		[SerializeField]
+		[SerializeField, BoxGroup("Job Allocation"), ShowIf(nameof(AllocateJobsToAntags))]
 		private List<JobType> nonAntagJobTypes = new List<JobType>
 		{
 			JobType.CAPTAIN,
@@ -132,6 +156,7 @@ namespace GameModes
 			JobType.WARDEN,
 			JobType.SECURITY_OFFICER,
 			JobType.DETECTIVE,
+			JobType.AI
 		};
 		/// <summary>
 		/// The JobTypes that cannot be chosen as antagonists for this game mode
@@ -149,7 +174,7 @@ namespace GameModes
 		public virtual bool IsPossible()
 		{
 			int players = PlayerList.Instance.ReadyPlayers.Count;
-			return players >= MinPlayers && (!RequiresMinAntags ||
+			return players >= MinPlayers && (!ForceMinAntags ||
 			                                 (Math.Floor(players * antagRatio) >= MinAntags));
 		}
 
@@ -212,8 +237,21 @@ namespace GameModes
 
 			// Are there enough antags already?
 			int newPlayerCount = PlayerList.Instance.InGamePlayers.Count + 1;
-			var expectedAntagCount = (int)Math.Floor(newPlayerCount * AntagRatio);
-			return AntagManager.Instance.AntagCount < expectedAntagCount;
+			var expectedAntagCount = Math.Min((int)Math.Floor(newPlayerCount * AntagRatio), maxAntags);
+
+			if (AntagManager.Instance.AntagCount < expectedAntagCount)
+			{
+				//We times the percentage based on the amount of open antag spaces
+				//E.g if traitor with two open slots it will be 25 * 2 = 50% chance on spawn to get the antag
+				//This prevents midround players from guessing when they can join the game to guarantee antag status
+				var percentage = midRoundAntagsChance * (expectedAntagCount - AntagManager.Instance.AntagCount);
+				if (DMMath.Prob(percentage))
+				{
+					return true;
+				}
+			}
+
+			return false;
 		}
 
 		/// <summary>
@@ -229,7 +267,7 @@ namespace GameModes
 			if (PossibleAntags.Count <= 0)
 			{
 				Logger.LogError("PossibleAntags is empty! Game mode must have some if spawning antags.",
-					Category.GameMode);
+					Category.Antags);
 				return;
 			}
 
@@ -239,7 +277,7 @@ namespace GameModes
 			if (antagPool.Count < 1)
 			{
 				Logger.LogErrorFormat("No possible antags! Either PossibleAntags is empty or this player hasn't enabled " +
-				                      "any antags and they were spawned as one anyways.", Category.GameMode);
+				                      "any antags and they were spawned as one anyways.", Category.Antags);
 			}
 
 			var antag = antagPool.PickRandom();
@@ -247,7 +285,7 @@ namespace GameModes
 			{
 				Logger.LogErrorFormat("AllocateJobsToAntags is false but {0} AntagOccupation is null! " +
 				                      "Game mode must either set AllocateJobsToAntags or possible antags neeed an AntagOccupation.",
-					Category.GameMode, antag.AntagName);
+					Category.Antags, antag.AntagName);
 				return;
 			}
 			AntagManager.Instance.ServerSpawnAntag(antag, playerSpawnRequest);
@@ -346,6 +384,9 @@ namespace GameModes
 			{
 				SpawnAntag(spawnReq);
 			}
+			StationObjectiveManager.Instance.ServerChooseObjective();
+			GameManager.Instance.CurrentRoundState = RoundState.Started;
+			EventManager.Broadcast(Event.RoundStarted, true);
 		}
 
 		/// <summary>
@@ -353,9 +394,9 @@ namespace GameModes
 		/// </summary>
 		private int CalculateAntagCount(int playerCount)
 		{
-			var antagCount = (int)Math.Floor(playerCount * antagRatio);
+			var antagCount = Math.Min((int)Math.Floor(playerCount * antagRatio), maxAntags);
 			// If RequiresMinAntags is true then round up to MinAntags if antagCount is below
-			return RequiresMinAntags ? Math.Max(MinAntags, antagCount) : antagCount;
+			return ForceMinAntags ? Math.Max(MinAntags, antagCount) : antagCount;
 		}
 
 		/// <summary>
@@ -369,9 +410,10 @@ namespace GameModes
 		/// <summary>
 		/// End the round and display any relevant reports
 		/// </summary>
-		public virtual void EndRound()
+		public void EndRoundReport()
 		{
 			Logger.LogFormat("Ending {0} round!", Category.GameMode, Name);
+			StationObjectiveManager.Instance.ShowStationStatusReport();
 			AntagManager.Instance.ShowAntagStatusReport();
 
 			var msg = $"The round will restart in {GameManager.Instance.RoundEndTime} seconds.";

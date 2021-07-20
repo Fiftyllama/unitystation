@@ -4,7 +4,10 @@ using System.Linq;
 using Mirror;
 using UnityEngine;
 using UnityEngine.UI;
+using Systems.MobAIs;
 using System.Text.RegularExpressions;
+using Systems.Ai;
+using Messages.Server;
 
 /// <summary>
 /// ChatRelay is only to be used internally via Chat.cs
@@ -15,7 +18,6 @@ public class ChatRelay : NetworkBehaviour
 	public static ChatRelay Instance;
 
 	private ChatChannel namelessChannels;
-	public List<ChatEvent> ChatLog { get; } = new List<ChatEvent>();
 	private LayerMask layerMask;
 	private LayerMask npcMask;
 
@@ -33,7 +35,6 @@ public class ChatRelay : NetworkBehaviour
 		if (Instance == null)
 		{
 			Instance = this;
-			Chat.RegisterChatRelay(Instance, AddToChatLogServer, AddToChatLogClient, AddPrivMessageToClient);
 		}
 		else
 		{
@@ -45,20 +46,14 @@ public class ChatRelay : NetworkBehaviour
 	{
 		namelessChannels = ChatChannel.Examine | ChatChannel.Local | ChatChannel.None | ChatChannel.System |
 						   ChatChannel.Combat;
-		layerMask = LayerMask.GetMask("Walls", "Door Closed");
+		layerMask = LayerMask.GetMask( "Door Closed");
 		npcMask = LayerMask.GetMask("NPC");
 
 		rconManager = RconManager.Instance;
 	}
 
 	[Server]
-	private void AddToChatLogServer(ChatEvent chatEvent)
-	{
-		PropagateChatToClients(chatEvent);
-	}
-
-	[Server]
-	private void PropagateChatToClients(ChatEvent chatEvent)
+	public void PropagateChatToClients(ChatEvent chatEvent)
 	{
 		List<ConnectedPlayer> players = PlayerList.Instance.AllPlayers;
 
@@ -76,7 +71,7 @@ public class ChatRelay : NetworkBehaviour
 					continue;
 				}
 
-				if (players[i].Script.IsGhost)
+				if (players[i].Script.IsGhost && players[i].Script.IsPlayerSemiGhost == false)
 				{
 					//send all to ghosts
 					continue;
@@ -88,8 +83,11 @@ public class ChatRelay : NetworkBehaviour
 					continue;
 				}
 
-				if (Vector2.Distance(chatEvent.position,
-						(Vector3)players[i].Script.WorldPos) > 14f)
+				//Send chat to PlayerChatLocation pos, usually just the player object but for AI is its vessel
+				var playerPosition = players[i].Script.PlayerChatLocation.OrNull()?.AssumedWorldPosServer()
+					?? players[i].Script.gameObject.AssumedWorldPosServer();
+
+				if (Vector2.Distance(chatEvent.position, playerPosition) > 14f)
 				{
 					//Player in the list is too far away for local chat, remove them:
 					players.RemoveAt(i);
@@ -97,8 +95,8 @@ public class ChatRelay : NetworkBehaviour
 				else
 				{
 					//within range, but check if they are in another room or hiding behind a wall
-					if (Physics2D.Linecast(chatEvent.position,
-						(Vector3)players[i].Script.WorldPos, layerMask))
+					if (MatrixManager.Linecast(chatEvent.position, LayerTypeSelection.Walls
+						 , layerMask,playerPosition).ItHit)
 					{
 						//if it hit a wall remove that player
 						players.RemoveAt(i);
@@ -110,8 +108,9 @@ public class ChatRelay : NetworkBehaviour
 			var npcs = Physics2D.OverlapCircleAll(chatEvent.position, 14f, npcMask);
 			foreach (Collider2D coll in npcs)
 			{
-				if (!Physics2D.Linecast(chatEvent.position,
-					coll.transform.position, layerMask))
+				var npcPosition = coll.gameObject.AssumedWorldPosServer();
+				if (MatrixManager.Linecast(chatEvent.position,LayerTypeSelection.Walls,
+					 layerMask,npcPosition).ItHit ==false)
 				{
 					//NPC is in hearing range, pass the message on:
 					var mobAi = coll.GetComponent<MobAI>();
@@ -131,10 +130,11 @@ public class ChatRelay : NetworkBehaviour
 				channels.HasFlag(ChatChannel.System) || channels.HasFlag(ChatChannel.Examine) ||
 				channels.HasFlag(ChatChannel.Action))
 			{
-				if (!channels.HasFlag(ChatChannel.Binary) || players[i].Script.IsGhost)
+				//Binary check here to avoid speaking in local when speaking on binary
+				if (!channels.HasFlag(ChatChannel.Binary) || (players[i].Script.IsGhost && players[i].Script.IsPlayerSemiGhost == false))
 				{
 					UpdateChatMessage.Send(players[i].GameObject, channels, chatEvent.modifiers, chatEvent.message, chatEvent.messageOthers,
-						chatEvent.originator, chatEvent.speaker);
+						chatEvent.originator, chatEvent.speaker, chatEvent.stripTags);
 
 					continue;
 				}
@@ -153,7 +153,7 @@ public class ChatRelay : NetworkBehaviour
 			if (channels != ChatChannel.None)
 			{
 				UpdateChatMessage.Send(players[i].GameObject, channels, chatEvent.modifiers, chatEvent.message, chatEvent.messageOthers,
-					chatEvent.originator, chatEvent.speaker);
+					chatEvent.originator, chatEvent.speaker, chatEvent.stripTags);
 			}
 		}
 
@@ -169,14 +169,9 @@ public class ChatRelay : NetworkBehaviour
 		}
 	}
 
-	[Client]
-	private void AddToChatLogClient(string message, ChatChannel channels)
-	{
-		UpdateClientChat(message, channels);
-	}
 
 	[Client]
-	private void AddPrivMessageToClient(string message)
+	public void AddAdminPrivMessageToClient(string message)
 	{
 		trySendingTTS(message);
 
@@ -184,7 +179,15 @@ public class ChatRelay : NetworkBehaviour
 	}
 
 	[Client]
-	private void UpdateClientChat(string message, ChatChannel channels)
+	public void AddMentorPrivMessageToClient(string message)
+	{
+		trySendingTTS(message);
+
+		ChatUI.Instance.AddMentorPrivEntry(message);
+	}
+
+	[Client]
+	public void UpdateClientChat(string message, ChatChannel channels, bool isOriginator, GameObject recipient)
 	{
 		if (string.IsNullOrEmpty(message)) return;
 
@@ -197,6 +200,15 @@ public class ChatRelay : NetworkBehaviour
 
 		if (channels != ChatChannel.None)
 		{
+			// replace action messages with chat bubble
+			if(channels.HasFlag(ChatChannel.Combat) || channels.HasFlag(ChatChannel.Action) || channels.HasFlag(ChatChannel.Examine))
+			{
+				if(isOriginator)
+				{
+					ChatBubbleManager.Instance.ShowAction(Regex.Replace(message, "<.*?>", string.Empty), recipient);
+				}
+			}
+
 			ChatUI.Instance.AddChatEntry(message);
 		}
 	}

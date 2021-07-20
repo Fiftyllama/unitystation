@@ -1,6 +1,7 @@
-
 using System.Linq;
 using Objects;
+using Systems.Spells;
+using ScriptableObjects.Systems.Spells;
 
 namespace Spells
 {
@@ -8,7 +9,7 @@ namespace Spells
 	{
 		protected override string FormatInvocationMessage(ConnectedPlayer caster, string modPrefix)
 		{
-			return string.Format(SpellData.InvocationMessage, caster.Name, caster.CharacterSettings.ThemPronoun());
+			return string.Format(SpellData.InvocationMessage, caster.Name, caster.CharacterSettings.ThemPronoun(caster.Script));
 		}
 
 		public override bool CastSpellServer(ConnectedPlayer caster)

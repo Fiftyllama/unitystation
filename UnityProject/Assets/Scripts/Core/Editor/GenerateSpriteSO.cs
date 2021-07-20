@@ -1,20 +1,56 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
-using System.Linq;
-using System.Reflection;
-using Systems.Botany;
+using Newtonsoft.Json.Linq;
+using Items;
 using Items.Botany;
 
+/// <summary>
+/// Used for random ass editor scripts, Has all the functions you need in a pinch
+/// </summary>
 public class GenerateSpriteSO : EditorWindow
 {
 	public static List<string> ToDel = new List<string>();
 	public static Dictionary<string, SpriteDataSO> ToSeve = new Dictionary<string, SpriteDataSO>();
 
 	public static SpriteCatalogue spriteCatalogue;
+
+	[MenuItem("Tools/Get Music keys")]
+	public static void GetMusicKeys()
+	{
+		var path = Application.dataPath.Remove(Application.dataPath.IndexOf("/Assets"));
+		path = path + "/AddressablePackingProjects/SoundAndMusic/ServerData"; //Make OS agnostic
+		Logger.Log(path, Category.Editor);
+		var Files = System.IO.Directory.GetFiles(path);
+		string FoundFile = "";
+		foreach (var File in Files)
+		{
+			Logger.Log(File, Category.Editor);
+			if (File.EndsWith(".json"))
+			{
+				FoundFile = File;
+			}
+		}
+
+		if (FoundFile == "")
+		{
+			Logger.LogWarning("missing json file", Category.Editor);
+			return;
+		}
+
+		JObject o1 = JObject.Parse(File.ReadAllText((@FoundFile.Replace("/", @"\"))));
+		var IDs = o1.GetValue("m_InternalIds");
+		var ListIDs = IDs.ToObject<List<string>>().Where(x => x.Contains(".bundle") == false);
+		foreach (var ListID in ListIDs)
+		{
+			Logger.Log(ListID, Category.Editor);
+		}
+
+	}
 
 	[MenuItem("Tools/StopAssetEditing")]
 	public static void StopAssetEditing()
@@ -23,11 +59,20 @@ public class GenerateSpriteSO : EditorWindow
 		return;
 	}
 
+	[MenuItem("Tools/StartAssetEditing")]
+	public static void StartAssetEditing()
+	{
+		AssetDatabase.StartAssetEditing();
+		return;
+	}
+
 
 	[MenuItem("Tools/Convert Json Sprites")]
 	public static void ConvertJsonSprites()
 	{
-		spriteCatalogue = AssetDatabase.LoadAssetAtPath<SpriteCatalogue>("Assets/Resources/ScriptableObjects/SOs singletons/SpriteCatalogueSingleton.asset");
+		spriteCatalogue =
+			AssetDatabase.LoadAssetAtPath<SpriteCatalogue>(
+				"Assets/Resources/ScriptableObjectsSingletons/SpriteCatalogueSingleton.asset");
 		ToSeve.Clear();
 		ToDel.Clear();
 		DirSearch_ex3(Application.dataPath + "/SpriteJsonToSO");
@@ -42,23 +87,86 @@ public class GenerateSpriteSO : EditorWindow
 			AssetDatabase.CreateAsset(Seve.Value, Seve.Key);
 			Seve.Value.Awake();
 		}
+
 		ToSeve.Clear();
 		ToDel.Clear();
 		AssetDatabase.SaveAssets();
 	}
 
 
+	[MenuItem("Tools/Reset SO index")]
+	public static void Reset()
+	{
+		AssetDatabase.StartAssetEditing();
+		var AAA = FindAssetsByType<SpriteCatalogue>();
+		foreach (var AA in AAA)
+		{
+			AA.Catalogue = new List<SpriteDataSO>();
+			EditorUtility.SetDirty(AA);
+		}
+
+		var SOs = FindAssetsByType<SpriteDataSO>();
+		foreach (var SO in SOs)
+		{
+			SO.setID = -1;
+			SO.UpdateIDLocation();
+		}
+
+		AssetDatabase.StopAssetEditing();
+		AssetDatabase.SaveAssets();
+	}
+
 	[MenuItem("Tools/GenerateSpriteSO")]
 	public static void Generate()
 	{
 		//AssetDatabase.StopAssetEditing();
 		//spriteCatalogue = AssetDatabase.LoadAssetAtPath<SpriteCatalogue>(
-		//	"Assets/Resources/ScriptableObjects/SOs singletons/SpriteCatalogueSingleton.asset");
+		//	"Assets/Resources/ScriptableObjectsSingletons/SpriteCatalogueSingleton.asset");
 		//
 		//	DirSearch_ex3Prefab(Application.dataPath + "/Resources/Prefabs/Items"); //
 		//
 		AssetDatabase.StartAssetEditing();
-		DirSearch_ex3(Application.dataPath + "/Textures");
+
+		var stuff = FindAssetsByType<PlayerSlotStoragePopulator>();
+
+		foreach (var PSSP in stuff)
+		{
+			bool NOID = true;
+			foreach (var Entry in PSSP.Entries)
+			{
+				if (Entry.NamedSlot == NamedSlot.id)
+				{
+					NOID = false;
+				}
+
+				if (Entry.NamedSlot == NamedSlot.uniform)
+				{
+					Entry.ReplacementStrategy = ReplacementStrategy.DespawnOther;
+				}
+
+				if (Entry.NamedSlot == NamedSlot.back)
+				{
+					Entry.ReplacementStrategy = ReplacementStrategy.DespawnOther;
+				}
+
+				if (Entry.NamedSlot == NamedSlot.ear)
+				{
+					Entry.ReplacementStrategy = ReplacementStrategy.DespawnOther;
+				}
+			}
+
+			if (NOID)
+			{
+				var ID = Spawn.GetPrefabByName("IDCardAutoInit");
+				var all = new SlotPopulatorEntry();
+				all.Prefab = ID;
+				all.NamedSlot = NamedSlot.id;
+				PSSP.Entries.Add(all);
+			}
+			EditorUtility.SetDirty( PSSP);
+		}
+
+		// DirSearch_ex3(Application.dataPath + "/Textures");
 		AssetDatabase.StopAssetEditing();
 		AssetDatabase.SaveAssets();
 		return;
@@ -70,11 +178,11 @@ public class GenerateSpriteSO : EditorWindow
 		{
 			//foreach (var Sprite in SH.Sprites)
 			//{
-				//var SO = PullOutSO(Sprite.Texture);
-				//if (SH.SubCatalogue.Contains(SO) == false)
-				//{
-					//SH.SubCatalogue.Add(SO);
-				//}
+			//var SO = PullOutSO(Sprite.Texture);
+			//if (SH.SubCatalogue.Contains(SO) == false)
+			//{
+			//SH.SubCatalogue.Add(SO);
+			//}
 			//}
 
 			var SR = SH.GetComponent<SpriteRenderer>();
@@ -92,10 +200,9 @@ public class GenerateSpriteSO : EditorWindow
 			}
 			catch
 			{
-				Logger.Log(GetRoot(SH.gameObject).name + "Not root apparently");
+				Logger.Log(GetRoot(SH.gameObject).name + "Not root apparently", Category.Editor);
 			}
 		}
-
 
 
 		return;
@@ -248,64 +355,6 @@ public class GenerateSpriteSO : EditorWindow
 		*/
 	}
 
-	public static GameObject FindSeedPacket(DefaultPlantData defaultPlantData)
-	{
-		var DD = LoadAllPrefabsOfType<SeedPacket>(Application.dataPath + "/Resources/Prefabs/Items/Botany");
-		foreach (var D in DD)
-		{
-			//if (D.defaultPlantData == defaultPlantData)
-			//{
-			//return D.gameObject;
-			//}
-		}
-
-		return null;
-	}
-
-
-	public static GameObject FindProduce(SeedPacket seedPacket)
-	{
-		var DD = LoadAllPrefabsOfType<GrownFood>(Application.dataPath + "/Resources/Prefabs/Items/Botany");
-		foreach (var D in DD)
-		{
-			if (D.seedPacket.GetComponent<SeedPacket>() == seedPacket)
-			{
-				return D.gameObject;
-			}
-		}
-
-		return null;
-	}
-
-
-	public static GameObject GenerateDummySeedPacket(DefaultPlantData plantData)
-	{
-		AssetDatabase.CopyAsset("Assets/Resources/Prefabs/Items/Botany/Seeds/AutoGenerated/seed packet Variant.prefab",
-			"Assets/Resources/Prefabs/Items/Botany/Seeds/AutoGenerated/" + plantData.plantData.Name + ".prefab");
-		var gameObject =
-			AssetDatabase.LoadAssetAtPath<GameObject>("Assets/Resources/Prefabs/Items/Botany/Seeds/AutoGenerated/" +
-			                                          plantData.plantData.Name + ".prefab");
-		var DDA = gameObject.GetComponent<SeedPacket>();
-
-		//DDA.defaultPlantData= plantData;
-		PrefabUtility.SavePrefabAsset(gameObject);
-		return gameObject;
-	}
-
-	public static GameObject GenerateDummyProduce(PlantData plantData, GameObject Seepdpakes)
-	{
-		AssetDatabase.CopyAsset("Assets/Resources/Prefabs/Items/Botany/Produce/AutoGenerated/base.prefab",
-			"Assets/Resources/Prefabs/Items/Botany/Produce/AutoGenerated/" + plantData.Name + ".prefab");
-		var gameObject = AssetDatabase.LoadAssetAtPath<GameObject>(
-			"Assets/Resources/Prefabs/Items/Botany/Produce/AutoGenerated/" +
-			plantData.Name + ".prefab");
-		gameObject.GetComponent<GrownFood>().seedPacket = Seepdpakes;
-		PrefabUtility.SavePrefabAsset(gameObject);
-		return gameObject;
-		//seedPacket
-	}
-
-
 	public static List<T> FindAssetsByType<T>() where T : UnityEngine.Object
 	{
 		List<T> assets = new List<T>();
@@ -366,6 +415,7 @@ public class GenerateSpriteSO : EditorWindow
 		}
 	 */
 
+	/*
 	public static EquippedData PullOutEquippedData(EquippedData ToProcess)
 	{
 		//ToProcess.SpriteEquipped = PullOutSO(ToProcess.Equipped.Texture);
@@ -374,6 +424,7 @@ public class GenerateSpriteSO : EditorWindow
 		//ToProcess.SpriteInHandsRight = PullOutSO(ToProcess.InHandsRight.Texture);
 		return ToProcess;
 	}
+	*/
 
 	public static SpriteDataSO PullOutSO(Texture2D In2D)
 	{
@@ -448,8 +499,6 @@ public class GenerateSpriteSO : EditorWindow
 
 				foreach (var S in hasTT)
 				{
-
-
 					prefabComponents.Add(S);
 				}
 			}

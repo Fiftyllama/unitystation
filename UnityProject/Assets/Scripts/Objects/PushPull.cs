@@ -1,6 +1,10 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using AddressableReferences;
+using HealthV2;
+using Messages.Server;
+using Messages.Server.SoundMessages;
 using UnityEngine;
 using UnityEngine.Events;
 using Mirror;
@@ -8,6 +12,7 @@ using UnityEngine.Serialization;
 using Objects;
 using Objects.Construction;
 using Random = UnityEngine.Random;
+
 
 public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 {
@@ -38,9 +43,13 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	public PushPull parentContainer {
 		get => _parentContainer;
 		set {
-			if (value == this)
+			if (this == null) // is possible, Unity
 			{
-				Logger.LogError(gameObject.name + " tried to set parentContainer to itself!", Category.Transform);
+				Logger.LogWarning("GameObject is null, and yet it tried to set a parentContainer.", Category.PushPull);
+			}
+			else if (value == this)
+			{
+				Logger.LogError($"{gameObject} tried to set {nameof(parentContainer)} to itself!", Category.PushPull);
 				return;
 			}
 
@@ -58,13 +67,13 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 				return parentContainer.parentContainer;
 			}
 
-			if (!VisibleState)
+			if (VisibleState == false)
 			{
 				var pu = GetComponent<Pickupable>();
 				if (pu != null && pu.ItemSlot != null)
 				{
 					//we are in an itemstorage, so report our root item storage object.
-					var pushPull = pu.ItemSlot.GetRootStorage().GetComponent<PushPull>();
+					var pushPull = pu.ItemSlot.GetRootStorageOrPlayer().GetComponent<PushPull>();
 					if (pushPull != null)
 					{
 						//our container has a pushpull, so use its parent
@@ -100,7 +109,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			{
 				//we are in an itemstorage, so report our position
 				//based on our root item storage object.
-				var storage = pu.ItemSlot.GetRootStorage();
+				var storage = pu.ItemSlot.GetRootStorageOrPlayer();
 				var pushPull = storage.GetComponent<PushPull>();
 				if (pushPull != null)
 				{
@@ -113,7 +122,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 					pos = storage.gameObject.WorldPosServer().CutToInt();
 					if (pos == TransformState.HiddenPos || pos == Vector3.zero)
 					{
-						Logger.LogWarningFormat("{0}: Assumed World Position is HiddenPos or Zero, something might be wrong", Category.Transform, gameObject.name);
+						Logger.LogWarningFormat("{0}: Assumed World Position is HiddenPos or Zero, something might be wrong", Category.PushPull, gameObject.name);
 					}
 
 					return pos;
@@ -123,7 +132,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			pos = Pushable.LastNonHiddenPosition;
 			if (pos == TransformState.HiddenPos || pos == Vector3.zero)
 			{
-				Logger.LogWarningFormat("{0}: Assumed World Position is HiddenPos or Zero, something might be wrong", Category.Transform, gameObject.name);
+				Logger.LogWarningFormat("{0}: Assumed World Position is HiddenPos or Zero, something might be wrong", Category.PushPull, gameObject.name);
 			}
 		}
 		return pos;
@@ -142,7 +151,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	/// Checks if there is anything preventing this from being pushed regardless of direction
 	/// (basically if it's anchored)
 	/// </summary>
-	public bool IsPushable => !isNotPushable;
+	public bool IsPushable => isNotPushable == false;
 	/// <summary>
 	/// Opposite of IsPushable
 	/// </summary>
@@ -155,12 +164,12 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	[Server]
 	public void ServerSetPushable(bool isPushable)
 	{
-		SyncIsNotPushable(isNotPushable, !isPushable);
+		SyncIsNotPushable(isNotPushable, isPushable == false);
 	}
 
 	[Tooltip("The sound to play when pushed/pulled")]
 	[SerializeField]
-	private string pushPullSound = null;
+	private AddressableAudioSource pushPullSound = null;
 
 	[Tooltip("A minimum delay for the sound to be played again (in milliseconds)")]
 	[SerializeField]
@@ -244,9 +253,9 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	private void OnHighSpeedCollision(CollisionInfo collision)
 	{
 		bool collided = false;
-		foreach (var living in MatrixManager.GetAt<LivingHealthBehaviour>(collision.CollisionTile, true))
+		foreach (var living in MatrixManager.GetAt<LivingHealthMasterBase>(collision.CollisionTile, true))
 		{
-			living.ApplyDamageToBodypart(gameObject, collision.Damage, AttackType.Melee, DamageType.Brute);
+			living.ApplyDamageToBodyPart(gameObject, collision.Damage, AttackType.Melee, DamageType.Brute);
 			collided = true;
 		}
 		foreach (var tile in MatrixManager.GetDamageableTilemapsAt(collision.CollisionTile))
@@ -258,9 +267,9 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		if (collided)
 		{
 			//Damage self as bad as the thing you collide with
-			GetComponent<LivingHealthBehaviour>()?.ApplyDamageToBodypart(gameObject, collision.Damage, AttackType.Melee, DamageType.Brute);
+			GetComponent<LivingHealthMasterBase>()?.ApplyDamageToBodyPart(gameObject, collision.Damage, AttackType.Melee, DamageType.Brute);
 			Logger.LogFormat("{0}: collided with something at {2}, both received {1} damage",
-				Category.Health, gameObject.name, collision.Damage, collision.CollisionTile);
+				Category.Damage, gameObject.name, collision.Damage, collision.CollisionTile);
 		}
 	}
 
@@ -276,8 +285,8 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		Pushable?.OnClientStopFollowing();
 	}
 
-	public bool IsSolidServer => !registerTile.IsPassable(true);
-	public bool IsSolidClient => !registerTile.IsPassable(false);
+	public bool IsSolidServer => registerTile.IsPassable(true) == false;
+	public bool IsSolidClient => registerTile.IsPassable(false) == false;
 
 
 	#region Pull Master
@@ -328,7 +337,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 
 	private void ReleaseControl()
 	{
-		if (!IsPullingSomethingServer)
+		if (IsPullingSomethingServer == false)
 		{
 			return;
 		}
@@ -346,7 +355,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	{
 		if (pullableObject == null) return;
 		PushPull pullable = pullableObject.GetComponent<PushPull>();
-		if (!pullable)
+		if (pullable == false)
 		{
 			return;
 		}
@@ -366,18 +375,18 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			}
 		}
 		ConnectedPlayer clientWhoAsked = PlayerList.Instance.Get(gameObject);
-		if (!Validations.CanApply(clientWhoAsked.Script, gameObject, NetworkSide.Server))
+		if (Validations.CanApply(clientWhoAsked.Script, gameObject, NetworkSide.Server) == false)
 		{
 			return;
 		}
 
-		if (Validations.IsInReach(pullable.registerTile, this.registerTile, true)
-				&& !pullable.isNotPushable && pullable != this && !IsBeingPulled)
+		if (Validations.IsReachableByRegisterTiles(pullable.registerTile, this.registerTile, true, context: pullableObject)
+				&& pullable.isNotPushable == false && pullable != this && IsBeingPulled == false)
 		{
 
 			if (pullable.StartFollowing(this))
 			{
-				SoundManager.PlayNetworkedAtPos("Rustle#", pullable.transform.position, sourceObj: pullableObject);
+				SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.ThudSwoosh, pullable.transform.position, sourceObj: pullableObject);
 
 				PulledObjectServer = pullable;
 
@@ -418,7 +427,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	{
 		yield return WaitFor.Seconds(2);
 
-		if (!Pushable.IsMovingClient
+		if (Pushable.IsMovingClient == false
 				&& Pushable.ClientPosition != Pushable.TrustedPosition
 			)
 		{
@@ -460,7 +469,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		else
 		{
 			// Check if in range for pulling, not trying to pull itself and it can be pulled.
-			if (Validations.IsInReach(registerTile, initiator.registerTile, false) &&
+			if (Validations.IsReachableByRegisterTiles(initiator.registerTile, registerTile, false, context: gameObject) &&
 				IsPushable && initiator != this)
 			{
 				return RightClickableResult.Create()
@@ -489,7 +498,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			{
 				return;
 			}
-			if (!TryFollow(currentPos, followDir, GetHeadSpeedServer()))
+			if (TryFollow(currentPos, followDir, GetHeadSpeedServer()) == false)
 			{
 				StopFollowing();
 			}
@@ -514,7 +523,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			{
 				return;
 			}
-			if (!TryPredictiveFollow(currentPos, oldPos, GetHeadSpeedClient()))
+			if (TryPredictiveFollow(currentPos, oldPos, GetHeadSpeedClient()) == false)
 			{
 				Logger.LogError($"{gameObject.name}: oops, predictive following {PulledByClient.gameObject.name} failed", Category.PushPull);
 			}
@@ -533,7 +542,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	/// </summary>
 	public bool CausesGravity()
 	{
-		if (!isNotPushable || floorDecal != null)
+		if (isNotPushable == false|| floorDecal != null)
 			return false;
 
 		return true;
@@ -642,7 +651,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	/// (Eventually)
 	public bool IsPulledByClient(PushPull pushPull)
 	{
-		if (!IsBeingPulledClient)
+		if (IsBeingPulledClient == false)
 		{
 			return false;
 		}
@@ -667,8 +676,8 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		bool chooChooTrain = attachTo.IsBeingPulled && attachTo.PulledBy != this;
 
 		//if puller can reach this + not trying to pull himself + not being pulled
-		if (Validations.IsInReach(attachTo.registerTile, this.registerTile, true)
-				&& attachTo != this && (!attachTo.IsBeingPulled || chooChooTrain))
+		if (Validations.IsReachableByRegisterTiles(attachTo.registerTile, this.registerTile, true, context: gameObject)
+				&& attachTo != this && (attachTo.IsBeingPulled == false || chooChooTrain))
 		{
 			Logger.LogTraceFormat("{0} started following {1}", Category.PushPull, this.gameObject.name, attachTo.gameObject.name);
 			PulledBy = attachTo;
@@ -681,7 +690,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	[Command]
 	public void CmdStopFollowing()
 	{
-		if (!IsBeingPulled)
+		if (IsBeingPulled == false)
 		{
 			return;
 		}
@@ -695,7 +704,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	[Server]
 	public void StopFollowing()
 	{
-		if (!IsBeingPulled)
+		if (IsBeingPulled == false)
 		{
 			return;
 		}
@@ -714,7 +723,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	{
 		var initiator = PlayerManager.LocalPlayerScript.pushPull;
 		//client pre-validation
-		if (Validations.IsInReach(this.registerTile, initiator.registerTile, false) && initiator != this)
+		if (Validations.IsReachableByRegisterTiles(initiator.registerTile, this.registerTile, false, context: gameObject) && initiator != this)
 		{
 			//client request: start/stop pulling
 			initiator.CmdPullObject(gameObject);
@@ -730,7 +739,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	[Server]
 	private bool TryFollow(Vector3Int from, Vector2Int dir, float speed = Single.NaN)
 	{
-		if (!IsBeingPulled || isNotPushable || isBeingPushed || Pushable == null)
+		if (IsBeingPulled == false || isNotPushable || isBeingPushed || Pushable == null)
 		{
 			return false;
 		}
@@ -741,15 +750,33 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			return false;
 		}
 
-		Vector3Int target = from + Vector3Int.RoundToInt((Vector2)dir);
-		if (!MatrixManager.IsPassableAt(from, target, isServer: true, includingPlayers: false)) //non-solid things can be pushed to player tile
+		Vector3Int intDir = Vector3Int.RoundToInt((Vector2)dir);
+		Vector3Int target = from + intDir;
+		if (MatrixManager.IsPassableAtAllMatrices(from, target, isServer: true, includingPlayers: false, context: gameObject) == false) //non-solid things can be pushed to player tile
 		{
 			return false;
 		}
 
-		bool success = Pushable.Push(dir, speed, true);
+		if (IsBlockedFromInside(from, intDir, true))
+		{
+			return false;
+		}
+
+		bool success = Pushable.Push(dir, speed, true, context: gameObject);
 		if (success)
 		{
+			//Moves players buckled to the pushed object
+			if (gameObject.GetComponent<BuckleInteract>() != null)
+			{
+				foreach (var playerMove in MatrixManager.GetAt<PlayerMove>(gameObject, NetworkSide.Server))
+				{
+					if (playerMove.IsBuckled)
+					{
+						playerMove.PlayerScript.PlayerSync.SetPosition(target);
+						break;
+					}
+				}
+			}
 			// Pulling a directional component should change it's orientation to match the one that pulls it
 			Directional directionalComponent;
 			if (TryGetComponent(out directionalComponent))
@@ -758,9 +785,10 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			}
 
 			// If there is a sound to be played
-			if (!string.IsNullOrWhiteSpace(pushPullSound) && (Time.time * 1000 > lastPlayedSoundTime + soundDelayTime))
+			if (pushPullSound == null && (Time.time * 1000 > lastPlayedSoundTime + soundDelayTime))
 			{
-				SoundManager.PlayNetworkedAtPos(pushPullSound, target, Random.Range(soundMinimumPitchVariance, soundMaximumPitchVariance), sourceObj: gameObject);
+				AudioSourceParameters audioSourceParameters = new AudioSourceParameters(Random.Range(soundMinimumPitchVariance, soundMaximumPitchVariance));
+				SoundManager.PlayNetworkedAtPos(pushPullSound, target, audioSourceParameters, sourceObj: gameObject);
 				lastPlayedSoundTime = Time.time * 1000;
 			}
 
@@ -770,9 +798,17 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 
 		return success;
 	}
+
 	private bool TryPredictiveFollow(Vector3Int from, Vector3Int target, float speed = Single.NaN)
 	{
-		if (!IsBeingPulledClient || isNotPushable || Pushable == null)
+		if (IsBeingPulledClient == false || isNotPushable || Pushable == null)
+		{
+			return false;
+		}
+
+		Vector3Int intDir = target - from;
+
+		if (IsBlockedFromInside(from, intDir, false))
 		{
 			return false;
 		}
@@ -792,7 +828,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	//Server fields
 	private bool isBeingPushed;
 	private Vector3Int pushTarget = TransformState.HiddenPos;
-	private Queue<Tuple<Vector2Int, float>> pushRequestQueue = new Queue<Tuple<Vector2Int, float>>();
+	private Queue<Tuple<Vector2Int, float, bool>> pushRequestQueue = new Queue<Tuple<Vector2Int, float, bool>>();
 
 	//Client fields
 	private PushState pushPrediction = PushState.None;
@@ -806,19 +842,19 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	#region Push
 
 	[Server]
-	public void QueuePush(Vector2Int dir, float speed = Single.NaN, bool allowDiagonals = false)
+	public void QueuePush(Vector2Int dir, float speed = Single.NaN, bool forcePush = false)
 	{
 		//		Logger.LogTraceFormat( "{0}: queued push {1} {2}", Category.PushPull, gameObject.name, dir, speed );
-		pushRequestQueue.Enqueue(new Tuple<Vector2Int, float>(dir, speed));
+		pushRequestQueue.Enqueue(new Tuple<Vector2Int, float, bool>(dir, speed, forcePush));
 		CheckQueue();
 	}
 
 	private void CheckQueue()
 	{
-		if (pushRequestQueue.Count > 0 && !isBeingPushed)
+		if (pushRequestQueue.Count > 0 && isBeingPushed == false)
 		{
 			var tuple = pushRequestQueue.Dequeue();
-			if (!TryPush(tuple.Item1, tuple.Item2))
+			if (TryPush(tuple.Item1, tuple.Item2, tuple.Item3) == false)
 			{
 				pushRequestQueue.Clear();
 			}
@@ -833,26 +869,53 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	}
 
 
+	/// <summary>
+	/// Try pushing an object
+	/// </summary>
+	/// <param name="dir"></param>
+	/// <param name="speed"></param>
+	/// <param name="forcePush">Sets object to pushable for one push only</param>
+	/// <returns></returns>
 	[Server]
-	public bool TryPush(Vector2Int dir, float speed = Single.NaN)
+	public bool TryPush(Vector2Int dir, float speed = Single.NaN, bool forcePush = false)
+	{
+		var originalPushableValue = IsPushable;
+		if (forcePush && originalPushableValue == false)
+		{
+			ServerSetPushable(true);
+		}
+
+		var result = TryPushInternal(dir, speed);
+
+		//Reset state if needed
+		if (forcePush && originalPushableValue == false)
+		{
+			ServerSetPushable(false);
+		}
+
+		return result;
+	}
+
+	[Server]
+	private bool TryPushInternal(Vector2Int dir, float speed = Single.NaN)
 	{
 		Vector3Int from = Pushable.ServerPosition;
-		if (!CanPushServer(from, dir, speed))
+		if (CanPushServer(from, dir, speed) == false)
 		{
 			return false;
 		}
 
-		bool success = Pushable.Push(dir, speed);
+		bool success = Pushable.Push(dir, speed, context: gameObject);
 		Vector3Int target = from + dir.To3Int();
 		if (success)
 		{
 			if (IsBeingPulled && //Break pull only if pushable will end up far enough
-					(pushRequestQueue.Count > 0 || !Validations.IsInReach(PulledBy.registerTile.WorldPositionServer, target)))
+			    (pushRequestQueue.Count > 0 || Validations.IsReachableByPositions(PulledBy.registerTile.WorldPositionServer, target, true, context: gameObject) == false))
 			{
 				StopFollowing();
 			}
 			if (IsPullingSomethingServer && //Break pull only if pushable will end up far enough
-					(pushRequestQueue.Count > 0 || !Validations.IsInReach(PulledObjectServer.registerTile.WorldPositionServer, target)))
+			    (pushRequestQueue.Count > 0 || Validations.IsReachableByPositions(PulledObjectServer.registerTile.WorldPositionServer, target, true, context: gameObject) == false))
 			{
 				ReleaseControl();
 			}
@@ -893,20 +956,20 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 	/// Return true if a push from the specified position in the specified direction would
 	/// cause this object to move. Does not actually move the object.
 	/// </summary>
-	/// <param name="from">position from which push is performed</param>
+	/// <param name="pusherPos">position from which push is performed</param>
 	/// <param name="dir">direction of the push</param>
 	/// <param name="speed">speed of the push</param>
 	/// <returns>true iff a push from the specified position in the specified direction would
 	/// cause the object to move.</returns>
-	private bool CanPush(Vector3Int from, Vector2Int dir, float speed = Single.NaN, bool serverSide = true)
+	private bool CanPush(Vector3Int pusherPos, Vector2Int dir, float speed = Single.NaN, bool serverSide = true)
 	{
-		if (isNotPushable || isBeingPushed || Pushable == null || !isAllowedDir(dir))
+		if (isNotPushable || isBeingPushed || Pushable == null || isAllowedDir(dir) == false)
 		{
 			return false;
 		}
 
-		Vector3Int currentPos = serverSide ? Pushable.ServerPosition : Pushable.ClientPosition;
-		if (from != currentPos)
+		Vector3Int pushablePos = serverSide ? Pushable.ServerPosition : Pushable.ClientPosition;
+		if (pusherPos != pushablePos)
 		{
 			return false;
 		}
@@ -917,8 +980,18 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 			return false;
 		}
 
-		Vector3Int target = from + Vector3Int.RoundToInt((Vector2)dir);
-		if (!MatrixManager.IsPassableAt(from, target, isServer: false, includingPlayers: IsSolidClient)) //non-solid things can be pushed to player tile
+		// If the pusher can't reach the pushee, assume there is a wall in the way.
+		Vector3Int intDir = Vector3Int.RoundToInt((Vector2)dir);
+
+		// If the pushable's movement in that direction is obstructed, then it can't be pushed.
+		Vector3Int target = pusherPos + intDir;
+		if (MatrixManager.IsPassableAtAllMatrices(pusherPos, target, isServer: serverSide, includingPlayers: IsSolidClient, //non-solid things can be pushed to player tile
+			context: gameObject) == false)
+		{
+			return false;
+		}
+
+		if (IsBlockedFromInside(pusherPos, intDir, serverSide))
 		{
 			return false;
 		}
@@ -926,9 +999,49 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		return true;
 	}
 
+	/// <summary>
+	/// Returns true iff this can't move in a direction from a locationn because something in the same square would block departure.
+	/// </summary>
+	/// <param name="from">starting location of movement</param>
+	/// <param name="dir">direction of hypoothetical movement</param>
+	/// <param name="serverSide">true iff this code is running on server</param>
+	/// <returns></returns>
+	public bool IsBlockedFromInside(Vector3Int from, Vector3Int dir, bool serverSide)
+	{
+		// If the pushable may prevent leaving in the opposite direction, make sure
+		// there are no items in that square that would collide in the opposite direction
+
+		if (dir.x == 0 || dir.y == 0)
+		{
+			// orthogonal movement
+			if (registerTile.IsPassableFromInside(-dir, serverSide) == false
+				&& MatrixManager.HasAnyDepartureBlockedAnyMatrix(from - dir, serverSide, registerTile))
+			{
+				return true;
+			}
+		}
+		else
+		{
+			// diagonal movement
+			Vector3Int horizontalDir = dir * Vector3Int.right;
+			Vector3Int verticalDir = dir * Vector3Int.up;
+
+			if (registerTile.IsPassableFromInside(-horizontalDir, serverSide) == false
+				&& registerTile.IsPassableFromInside(-verticalDir, serverSide) == false
+				&& MatrixManager.HasAnyDepartureBlockedAnyMatrix(from-horizontalDir, serverSide, registerTile)
+				&& MatrixManager.HasAnyDepartureBlockedAnyMatrix(from - verticalDir, serverSide, registerTile))
+			{
+				return true;
+			}
+
+		}
+		return false;
+	}
+
+	[Client]
 	public bool TryPredictivePush(Vector3Int from, Vector2Int dir, float speed = Single.NaN)
 	{
-		if (isNotPushable || !CanPredictPush || Pushable == null || !isAllowedDir(dir))
+		if (isNotPushable || CanPredictPush == false || Pushable == null || isAllowedDir(dir) == false)
 		{
 			return false;
 		}
@@ -937,10 +1050,17 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 		{
 			return false;
 		}
-		Vector3Int target = from + Vector3Int.RoundToInt((Vector2)dir);
-		if (!MatrixManager.IsPassableAt(from, target, isServer: false) ||
+
+		Vector3Int intDir = Vector3Int.RoundToInt((Vector2)dir);
+		Vector3Int target = from + intDir;
+		if (MatrixManager.IsPassableAtAllMatrices(from, target, isServer: false, context: gameObject) == false ||
 				MatrixManager.IsNoGravityAt(target, isServer: false))
 		{ //not allowing predictive push into space
+			return false;
+		}
+
+		if (IsBlockedFromInside(from, intDir, false))
+		{
 			return false;
 		}
 
@@ -987,7 +1107,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 
 	private void OnServerTileReached(Vector3Int newPos)
 	{
-		if (!isBeingPushed && pushRequestQueue.Count == 0)
+		if (isBeingPushed == false && pushRequestQueue.Count == 0)
 		{
 			return;
 		}
@@ -997,7 +1117,7 @@ public class PushPull : NetworkBehaviour, IRightClickable/*, IServerSpawn*/
 
 		if (pushTarget != TransformState.HiddenPos &&
 				pushTarget != newPos &&
-				!MatrixManager.IsFloatingAt(gameObject, newPos, true))
+				MatrixManager.IsFloatingAt(gameObject, newPos, true) == false)
 		{
 			//unexpected pos reported by server tile (common in space, space )
 			pushRequestQueue.Clear();

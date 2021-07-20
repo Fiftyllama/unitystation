@@ -1,16 +1,12 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using NaughtyAttributes;
+﻿using System.Collections;
 using UnityEngine;
-using WebSocketSharp;
+using Systems.Mob;
 using Random = UnityEngine.Random;
 
-namespace NPC
+namespace Systems.MobAIs
 {
-	public class GenericFriendlyAI : MobAI, IServerSpawn
+	public class GenericFriendlyAI : MobAI
 	{
-		protected string mobNameCap;
 		protected float timeForNextRandomAction;
 		protected float timeWaiting;
 		[SerializeField]
@@ -19,31 +15,30 @@ namespace NPC
 		protected float maxTimeBetweenRandomActions = 30f;
 		[SerializeField]
 		protected bool doRandomActionWhenInTask = false;
+		public string MobName => mobName.Capitalize();
 
-		protected SimpleAnimal simpleAnimal;
+		#region Lifecycle
 
-		protected override void Awake()
-		{
-			base.Awake();
-			mobNameCap = mobName.IsNullOrEmpty() ? mobName : char.ToUpper(mobName[0]) + mobName.Substring(1);
-			simpleAnimal = GetComponent<SimpleAnimal>();
-			BeginExploring();
-		}
-
-		protected override void UpdateMe()
-		{
-			if (!MatrixManager.IsInitialized || health.IsDead || health.IsCrit || health.IsCardiacArrest) return;
-
-			base.UpdateMe();
-			MonitorExtras();
-		}
-
-
-		protected override void AIStartServer()
+		protected override void OnSpawnMob()
 		{
 			exploringStopped.AddListener(OnExploringStopped);
 			fleeingStopped.AddListener(OnFleeingStopped);
 			followingStopped.AddListener(OnFollowStopped);
+		}
+
+		protected override void OnAIStart()
+		{
+			BeginExploring();
+		}
+
+		#endregion Lifecycle
+
+		protected override void UpdateMe()
+		{
+			if (MatrixManager.IsInitialized == false || health.IsDead || health.IsCrit || health.IsCardiacArrest) return;
+
+			base.UpdateMe();
+			MonitorExtras();
 		}
 
 		protected virtual void MonitorExtras()
@@ -64,14 +59,14 @@ namespace NPC
 		{
 			Chat.AddActionMsgToChat(
 				gameObject,
-				$"{mobNameCap} starts chasing its own tail!",
-				$"{mobNameCap} starts chasing its own tail!");
+				$"{MobName} starts chasing its own tail!",
+				$"{MobName} starts chasing its own tail!");
 
 			for (int timesSpun = 0; timesSpun <= times; timesSpun++)
 			{
 				for (int spriteDir = 1; spriteDir < 5; spriteDir++)
 				{
-					dirSprites.DoManualChange(spriteDir);
+					directional.FaceDirection(directional.CurrentDirection.Rotate(1));
 					yield return WaitFor.Seconds(0.3f);
 				}
 			}
@@ -79,32 +74,14 @@ namespace NPC
 			yield return WaitFor.EndOfFrame;
 		}
 
-
-		protected virtual void DoRandomAction() {}
-
-		public void OnSpawnServer(SpawnInfo info)
-		{
-			OnSpawnMob();
-		}
-
-		protected virtual void OnSpawnMob()
-		{
-			dirSprites.SetToNPCLayer();
-			registerObject.RestoreAllToDefault();
-			if (simpleAnimal != null)
-			{
-				simpleAnimal.SetDeadState(false);
-			}
-		}
-
 		protected override void OnAttackReceived(GameObject damagedBy = null)
 		{
 			StartFleeing(damagedBy, 5f);
 		}
 
-		protected virtual void OnExploringStopped(){}
-		protected virtual void OnFleeingStopped(){}
-		protected virtual void OnFollowStopped(){}
-
+		protected virtual void OnExploringStopped() {}
+		protected virtual void OnFleeingStopped() {}
+		protected virtual void OnFollowStopped() {}
+		protected virtual void DoRandomAction() { }
 	}
 }

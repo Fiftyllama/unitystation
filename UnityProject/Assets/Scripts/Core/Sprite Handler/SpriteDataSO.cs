@@ -12,6 +12,8 @@ public class SpriteDataSO : ScriptableObject
 	public bool IsPalette = false;
 	public int setID = -1;
 
+	public string DisplayName;
+
 	[System.Serializable]
 	public class Variant
 	{
@@ -46,6 +48,27 @@ public class SpriteDataSO : ScriptableObject
 				setID = SpriteCatalogue.Instance.Catalogue.IndexOf(this);
 				Unity.EditorCoroutines.Editor.EditorCoroutineUtility.StartCoroutine(EditorSave(), this);
 			}
+		}
+	}
+
+	public void UpdateIDLocation()
+	{
+		if (setID == -1)
+		{
+			if (SpriteCatalogue.Instance == null)
+			{
+				Resources.LoadAll<SpriteCatalogue>("ScriptableObjectsSingletons");
+			}
+
+			if (!SpriteCatalogue.Instance.Catalogue.Contains(this))
+			{
+
+				SpriteCatalogue.Instance.AddToCatalogue(this);
+			}
+
+			setID = SpriteCatalogue.Instance.Catalogue.IndexOf(this);
+			EditorUtility.SetDirty(this);
+			EditorUtility.SetDirty( SpriteCatalogue.Instance);
 		}
 	}
 

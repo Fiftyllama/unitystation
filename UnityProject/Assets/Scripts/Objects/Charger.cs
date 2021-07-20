@@ -1,10 +1,11 @@
 ﻿using System;
 using UnityEngine;
 using Systems.Electricity;
+using Weapons;
 
 namespace Objects
 {
-	public class Charger : MonoBehaviour, ICheckedInteractable<HandApply>, IAPCPowered
+	public class Charger : MonoBehaviour, ICheckedInteractable<HandApply>, IAPCPowerable
 	{
 		private ItemStorage itemStorage;
 		private ItemSlot ChargingSlot;
@@ -77,7 +78,7 @@ namespace Objects
 				SetSprite(SpriteState.Idle);
 				_APCPoweredDevice.Resistance = 99999;
 			}
-			else if (ChargingSlot.Item == null && interaction.UsedObject != null)
+			else if (ChargingSlot.Item == null && interaction.UsedObject != null && Validations.HasItemTrait(interaction.HandObject, CommonTraits.Instance.InternalBattery))
 			{
 				var _object = interaction.UsedObject.GetComponent<InternalBattery>();
 				if (_object == null) return;
@@ -122,6 +123,11 @@ namespace Objects
 		private void AddCharge()
 		{
 			battery.Watts += ChargingWatts;
+			
+			if (battery.Watts > battery.MaxWatts)
+			{
+				battery.Watts = battery.MaxWatts;
+			}
 
 			if (electricalMagazine != null)
 			{
@@ -135,18 +141,15 @@ namespace Objects
 			spriteHandler.ChangeSprite((int)newState);
 		}
 
-		public void PowerNetworkUpdate(float Voltage)
+		public void PowerNetworkUpdate(float voltage)
 		{
 			if (battery != null)
 			{
-				ChargingWatts = Mathf.RoundToInt((Voltage / battery.InternalResistance) * Voltage);
+				ChargingWatts = Mathf.RoundToInt((voltage / battery.InternalResistance) * voltage);
 				_APCPoweredDevice.Resistance = battery.InternalResistance;
 			}
 		}
 
-		public void StateUpdate(PowerStates State)
-		{
-
-		}
+		public void StateUpdate(PowerState state) { }
 	}
 }

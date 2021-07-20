@@ -3,16 +3,19 @@ using UnityEngine;
 using Mirror;
 using Systems.Atmospherics;
 using Systems.Explosions;
+using UnityEditor;
 
 namespace Objects.Atmospherics
 {
 	[RequireComponent(typeof(Integrity))]
-	public class GasContainer : NetworkBehaviour, IGasMixContainer, IServerSpawn
+	public class GasContainer : NetworkBehaviour, IGasMixContainer, IServerSpawn, IServerInventoryMove
 	{
 		//max pressure for determining explosion effects - effects will be maximum at this contained pressure
 		private static readonly float MAX_EXPLOSION_EFFECT_PRESSURE = 148517f;
 
 		public GasMix GasMix { get; set; }
+
+		public GasMix StoredGasMix = new GasMix();
 
 		public bool IsVenting { get; private set; } = false;
 
@@ -20,13 +23,8 @@ namespace Objects.Atmospherics
 		public float MaximumMoles = 0f;
 
 		public float ReleasePressure = 101.325f;
-
-		// Keeping a copy of these values for initialization and the editor
 		public float Volume;
-
-		//hide these values as they're defined in GasContainerEditor.cs
-		[HideInInspector] public float Temperature;
-		[HideInInspector] public float[] Gases = new float[Gas.Count];
+		public float Temperature;
 
 		private Integrity integrity;
 
@@ -38,10 +36,22 @@ namespace Objects.Atmospherics
 
 		private bool gasIsInitialised = false;
 
+		private Pickupable pickupable;
+
+		[SyncVar]
+		//Only updated and valid for canisters inside the players inventory!!!
+		//How full the tank is
+		private float fullPercentageClient = 0;
+		public float FullPercentageClient => fullPercentageClient;
+
+		//Valid serverside only
+		public float FullPercentage => GasMix.Moles / MaximumMoles;
+
 		#region Lifecycle
 
 		private void Awake()
 		{
+			pickupable = GetComponent<Pickupable>();
 			integrity = GetComponent<Integrity>();
 		}
 
@@ -57,21 +67,41 @@ namespace Objects.Atmospherics
 
 		private void OnDisable()
 		{
-			SetVentClosed();
 			integrity.OnApplyDamage.RemoveListener(OnServerDamage);
+			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateLoop);
 		}
 
 		private void OnServerDamage(DamageInfo info)
 		{
 			if (integrity.integrity - info.Damage <= 0)
 			{
-				SetVentClosed();
 				ExplodeContainer();
 				integrity.RestoreIntegrity(integrity.initialIntegrity);
 			}
 		}
 
 		#endregion Lifecycle
+
+		// Needed for the internals tank on the player UI, to know oxygen gas percentage
+		public void OnInventoryMoveServer(InventoryMove info)
+		{
+			//If going to a player start loop
+			if (info.ToPlayer != null && info.ToSlot != null)
+			{
+				UpdateManager.Add(UpdateLoop, 1f);
+				return;
+			}
+
+			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateLoop);
+		}
+
+		//Serverside only update loop, runs every second, started when canister goes into players inventory
+		private void UpdateLoop()
+		{
+			if(pickupable.ItemSlot == null) return;
+
+			fullPercentageClient = FullPercentage;
+		}
 
 		[Server]
 		private void ExplodeContainer()
@@ -84,7 +114,7 @@ namespace Objects.Atmospherics
 			ReleaseContentsInstantly();
 
 			ExplosionUtils.PlaySoundAndShake(WorldPosition, shakeIntensity, (int)shakeDistance);
-			Chat.AddLocalDestroyMsgToChat(gameObject.ExpensiveName(), " exploded!", WorldPosition.To2Int());
+			Chat.AddLocalDestroyMsgToChat(gameObject.ExpensiveName(), " exploded!", gameObject);
 
 			ServerContainerExplode?.Invoke();
 			// Disable this script, gameObject has no valid container now.
@@ -95,42 +125,13 @@ namespace Objects.Atmospherics
 		{
 			MetaDataLayer metaDataLayer = MatrixManager.AtPoint(WorldPosition, true).MetaDataLayer;
 			MetaDataNode node = metaDataLayer.Get(LocalPosition, false);
-			
-			node.GasMix += GasMix;
+
+			GasMix.TransferGas(node.GasMix, GasMix, GasMix.Moles);
 			metaDataLayer.UpdateSystemsAt(LocalPosition, SystemType.AtmosSystem);
 		}
 
-		public void SetVent(bool isOpen)
-		{
-			if (isOpen)
-			{
-				SetVentOpen();
-			}
-			else
-			{
-				SetVentClosed();
-			}
-		}
-
-		private void SetVentOpen()
-		{
-			IsVenting = true;
-			UpdateManager.Add(CallbackType.UPDATE, UpdateVenting);
-		}
-
-		private void SetVentClosed()
-		{
-			IsVenting = false;
-			UpdateManager.Remove(CallbackType.UPDATE, UpdateVenting);
-		}
-
-		private void UpdateVenting()
-		{
-			VentContents();
-		}
-
 		[Server]
-		private void VentContents()
+		public void VentContents()
 		{
 			var metaDataLayer = MatrixManager.AtPoint(Vector3Int.RoundToInt(transform.position), true).MetaDataLayer;
 
@@ -141,28 +142,34 @@ namespace Objects.Atmospherics
 
 			if (deltaPressure > 0)
 			{
-				float ratio = deltaPressure / GasMix.Pressure * Time.deltaTime;
+				float ratio = deltaPressure * Time.deltaTime;
 
-				node.GasMix += GasMix * ratio;
-
-				GasMix *= (1 - ratio);
+				GasMix.TransferGas(node.GasMix, GasMix, ratio);
 
 				metaDataLayer.UpdateSystemsAt(localPosition, SystemType.AtmosSystem);
 
 				Volume = GasMix.Volume;
 				Temperature = GasMix.Temperature;
 
-				foreach (Gas gas in Gas.All)
+				foreach (var gas in GasMix.GasesArray)
 				{
-					Gases[gas] = GasMix.Gases[gas];
+					StoredGasMix.GasData.SetMoles(gas.GasSO, gas.Moles);
 				}
 			}
 		}
+#if UNITY_EDITOR
 
+		[ContextMenu("Set Values for Gas")]
+		private void Validate()
+		{
+			Undo.RecordObject(gameObject, "Gas Change");
+			StoredGasMix = GasMix.FromTemperature(StoredGasMix.GasData, Temperature, Volume);
+		}
+#endif
 		public void UpdateGasMix()
 		{
 			gasIsInitialised = true;
-			GasMix = GasMix.FromTemperature(Gases, Temperature, Volume);
+			GasMix = GasMix.FromTemperature(StoredGasMix.GasData, Temperature, Volume);
 		}
 	}
 }

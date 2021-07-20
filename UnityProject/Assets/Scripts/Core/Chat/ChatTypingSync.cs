@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using Messages.Client;
 using UnityEngine;
 
 /// <summary>
@@ -8,12 +9,6 @@ using UnityEngine;
 /// </summary>
 public class ChatTypingSync : MonoBehaviour
 {
-	/// <summary>
-	/// This channels can't be heard as sound or OOC, so we don't need to show typing icon for them
-	/// </summary>
-	public const ChatChannel BlacklistChannels =
-		Chat.NonVerbalChannels | Chat.ServiceChannels;
-
 	[Tooltip("Time after which client consider that player doesn't type anymore")]
 	public float typingTimeout = 2f;
 
@@ -42,8 +37,8 @@ public class ChatTypingSync : MonoBehaviour
 		if (string.IsNullOrEmpty(newMsg))
 			return;
 
-		var hasBlacklistedChannel = BlacklistChannels.HasFlag(selectedChannels);
-	
+		var hasBlacklistedChannel = Chat.NonSpeechChannels.HasFlag(selectedChannels);
+
 		if (isPlayerTyping)
 		{
 			// update last typing time

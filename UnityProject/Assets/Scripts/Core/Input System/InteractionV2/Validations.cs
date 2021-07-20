@@ -2,6 +2,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Systems.Ai;
+using Core.Input_System.InteractionV2.Interactions;
+using HealthV2;
+using Items;
+using Objects.Wallmounts;
+using TileManagement;
 using UnityEngine;
 
 /// <summary>
@@ -115,22 +121,6 @@ public static class Validations
 	/// Checks if a player is allowed to interact with things (based on this player's status, such
 	/// as being conscious, and not cuffed).
 	/// </summary>
-	/// <param name="player">player gameobject to check</param>
-	/// <param name="side">side of the network the check is being performed on</param>
-	/// <param name="allowSoftCrit">whether interaction should be allowed if in soft crit</param>
-	/// <param name="allowCuffed">whether interaction should be allowed if cuffed</param>
-	/// <returns></returns>
-	public static bool CanInteract(GameObject player, NetworkSide side, bool allowSoftCrit = false, bool allowCuffed = false, bool isPlayerClick = true)
-	{
-		if (player == null) return false;
-
-		return CanInteract(player.GetComponent<PlayerScript>(), side, allowSoftCrit, allowCuffed, isPlayerClick);
-	}
-
-	/// <summary>
-	/// Checks if a player is allowed to interact with things (based on this player's status, such
-	/// as being conscious, and not cuffed).
-	/// </summary>
 	/// <param name="playerScript">playerscript of the player to check</param>
 	/// <param name="side">side of the network the check is being performed on</param>
 	/// <param name="allowSoftCrit">whether interaction should be allowed if in soft crit</param>
@@ -139,12 +129,12 @@ public static class Validations
 	public static bool CanInteract(PlayerScript playerScript, NetworkSide side, bool allowSoftCrit = false, bool allowCuffed = false, bool isPlayerClick = true)
 	{
 		if (playerScript == null) return false;
-		if (isPlayerClick && !CanInteractByCoolDownState(playerScript.gameObject)) return false;
+		if (isPlayerClick && CanInteractByCoolDownState(playerScript.gameObject) == false) return false;
 
-		if ((!allowCuffed && playerScript.playerMove.IsCuffed) ||
+		if ((allowCuffed == false && playerScript.playerMove.IsCuffed) ||
 		    playerScript.IsGhost ||
-		    !playerScript.playerMove.allowInput ||
-		    !CanInteractByConsciousState(playerScript.playerHealth, allowSoftCrit, side))
+		    playerScript.playerMove.allowInput == false||
+		    CanInteractByConsciousState(playerScript.playerHealth, allowSoftCrit, side) == false)
 		{
 			return false;
 		}
@@ -155,12 +145,12 @@ public static class Validations
 	//Monitors the interaction rate of a player. If its too fast we return false
 	private static bool CanInteractByCoolDownState(GameObject playerObject)
 	{
-		if (!playersMaxClick.ContainsKey(playerObject))
+		if (playersMaxClick.ContainsKey(playerObject) == false)
 		{
 			playersMaxClick.Add(playerObject, 0);
 		}
 
-		if (!playerCoolDown.ContainsKey(playerObject))
+		if (playerCoolDown.ContainsKey(playerObject) == false)
 		{
 			playerCoolDown.Add(playerObject, DateTime.Now);
 			return true;
@@ -183,7 +173,7 @@ public static class Validations
 		return true;
 	}
 
-	private static bool CanInteractByConsciousState(PlayerHealth playerHealth, bool allowSoftCrit, NetworkSide side)
+	private static bool CanInteractByConsciousState(PlayerHealthV2 playerHealth, bool allowSoftCrit, NetworkSide side)
 	{
 		if (side == NetworkSide.Client)
 		{
@@ -220,7 +210,7 @@ public static class Validations
 
 		var playerObjBehavior = playerScript.pushPull;
 
-		if (!CanInteract(playerScript, side, allowSoftCrit, isPlayerClick: isPlayerClick))
+		if (CanInteract(playerScript, side, allowSoftCrit, isPlayerClick: isPlayerClick) == false)
 		{
 			return false;
 		}
@@ -251,7 +241,7 @@ public static class Validations
 		// This was added so NetTabs (NetTab.ValidatePeepers()) can be used on items in an inventory.
 		if (target != null && target.TryGetComponent(out Pickupable pickupable) && pickupable.ItemSlot != null)
 		{
-			if (pickupable.ItemSlot.RootPlayer().gameObject == playerScript.gameObject)
+			if (pickupable.ItemSlot.RootPlayer().OrNull()?.gameObject == playerScript.gameObject)
 			{
 				result = true;
 			}
@@ -286,7 +276,7 @@ public static class Validations
 			}
 		}
 
-		if (!result && side == NetworkSide.Server && Logger.LogLevel >= LogLevel.Trace)
+		if (result == false && side == NetworkSide.Server && Logger.LogLevel >= LogLevel.Trace)
 		{
 			Vector3 worldPosition = Vector3.zero;
 			bool isFloating = false;
@@ -315,7 +305,7 @@ public static class Validations
 
 			Logger.LogTraceFormat($"Not in reach! Target: {targetName} server pos:{worldPosition} "+
 				                  $"Player Name: {playerScript.playerName} Player pos:{playerScript.registerTile.WorldPositionServer} " +
-								  $"(floating={isFloating})", Category.Security);
+								  $"(floating={isFloating})", Category.Exploits);
 		}
 
 		return result;
@@ -342,7 +332,7 @@ public static class Validations
 			//Use the smart range check which works better on moving matrices
 			if (regTarget != null)
 			{
-				result = IsInReach(playerScript.registerTile, regTarget, side == NetworkSide.Server);
+				result = IsReachableByRegisterTiles(playerScript.registerTile, regTarget, side == NetworkSide.Server, context: target);
 			}
 			else
 			{
@@ -351,28 +341,81 @@ public static class Validations
 				//note: we use transform position for both player and target (rather than registered position) because
 				//registered position and transform positions can be out of sync with each other esp. on moving matrices
 				if (playerScript == null || target == null) return false;
-				result = IsInReach(playerScript.transform.position, target.transform.position);
+				result = IsReachableByPositions(playerScript.transform.position, target.transform.position, side == NetworkSide.Server, context: target);
 			}
 
 		}
 		else
 		{
 			//use target vector based range check
-			result = IsInReach((Vector3) targetVector);
+			Vector3 playerWorldPos = playerScript.WorldPos;
+			result = IsReachableByPositions(playerWorldPos, playerWorldPos + (Vector3)targetVector, side == NetworkSide.Server, context: target);
 		}
 
 		return result;
 	}
 
-	public static bool IsInReach( Vector3 targetVector, float interactDist = PlayerScript.interactionDistance )
+	/// <summary>
+	/// Checks if a delta vector is within interaction distance
+	/// </summary>
+	/// <param name="targetVector">the delta vector representing how distant the interaction is occurring</param>
+	/// <param name="interactDist">the horizontal or vertical distance required for out-of-reach</param>
+	/// <returns>true if the x and y distance of interaction are less than interactDist</returns>
+	public static bool IsInReachDistanceByDelta(Vector3 targetVector, float interactDist = PlayerScript.interactionDistance)
 	{
 		return Mathf.Max( Mathf.Abs(targetVector.x), Mathf.Abs(targetVector.y) ) < interactDist;
 	}
 
-	public static bool IsInReach(Vector3 fromWorldPos, Vector3 toWorldPos, float interactDist = PlayerScript.interactionDistance)
+	/// <summary>
+	/// Checks if a delta vector is within interaction distance
+	/// </summary>
+	/// <param name="targetVector">the delta vector representing how distant the interaction is occurring</param>
+	/// <param name="interactDist">the horizontal or vertical distance required for out-of-reach</param>
+	/// <returns>true if the x and y distance of interaction are less than interactDist</returns>
+	public static bool IsInReachDistanceByPositions(Vector3 fromWorldPos, Vector3 toWorldPos, float interactDist = PlayerScript.interactionDistance)
 	{
 		var targetVector = fromWorldPos - toWorldPos;
-		return IsInReach( targetVector );
+		return IsInReachDistanceByDelta(targetVector, interactDist: interactDist);
+	}
+
+
+	/// <summary>
+	/// Checks if two position vectors are is within interaction distance AND also there is no blocking element between them
+	/// </summary>
+	/// <param name="fromWorldPos">One position of the interaction</param>
+	/// <param name="interactDist">The Other position of the interaction</param>
+	/// <param name="isServer">Whether or not this call is occurring on the server</param>
+	/// <param name="context">If not null, will ignore collisions caused by this gameobject</param>
+	/// <returns>true if the x and y distance of interaction are less than interactDist and there is no blockage. False otherwise.</returns>
+	public static bool IsReachableByPositions(Vector3 fromWorldPos, Vector3 toWorldPos, bool isServer, float interactDist = PlayerScript.interactionDistance, GameObject context = null)
+	{
+		if (IsNotBlocked(fromWorldPos, toWorldPos, isServer: isServer, context: context))
+		{
+			Vector3Int toWorldPosInt = toWorldPos.RoundToInt();
+
+			return IsInReachDistanceByPositions(fromWorldPos, toWorldPos, interactDist: interactDist);
+		}
+
+		return false;
+
+	}
+
+	private static bool IsNotBlocked(Vector3 worldPosA, Vector3 worldPosB, bool isServer, GameObject context = null)
+	{
+		Vector3Int worldPosAInt = Vector3Int.RoundToInt(worldPosA);
+		Vector3Int worldPosBInt = Vector3Int.RoundToInt(worldPosB);
+
+		if (worldPosAInt == worldPosBInt)
+		{
+			return true;
+		}
+
+		bool result = MatrixManager.IsPassableAtAllMatrices(worldPosAInt, worldPosBInt, isServer: isServer, collisionType: CollisionType.Airborne,
+			context: context, includingPlayers: false, isReach: true,
+			excludeLayers: new List<LayerType> { LayerType.Walls, LayerType.Windows, LayerType.Grills },
+			onlyExcludeLayerOnDestination: true);
+
+		return result;
 	}
 
 
@@ -381,105 +424,132 @@ public static class Validations
 	/// </summary>
 	/// <param name="from"></param>
 	/// <param name="to"></param>
-	/// <param name="isServer"></param>
+	/// <param name="isServer">Whether or not this call is occurring on the server</param>
 	/// <param name="interactDist"></param>
+	/// <param name="context">If not null, will ignore collisions caused by this gameobject</param>
 	/// <returns></returns>
-	public static bool IsInReach(RegisterTile from, RegisterTile to, bool isServer, float interactDist = PlayerScript.interactionDistance)
+	public static bool IsReachableByRegisterTiles(RegisterTile from, RegisterTile to, bool isServer, float interactDist = PlayerScript.interactionDistance, GameObject context = null)
 	{
 		if ( isServer )
 		{
-			return from.Matrix == to.Matrix && IsInReach(from.LocalPositionServer, to.LocalPositionServer, interactDist) ||
-			       IsInReach(from.WorldPositionServer, to.WorldPositionServer, interactDist);
+			return IsReachableByPositions(from.WorldPositionServer, to.WorldPositionServer, isServer, interactDist, context: context);
 		}
 		else
 		{
-			return from.Matrix == to.Matrix && IsInReach(from.LocalPositionClient, to.LocalPositionClient, interactDist) ||
-			       IsInReach(from.WorldPositionClient, to.WorldPositionClient, interactDist);
+			return IsReachableByPositions(from.WorldPositionClient, to.WorldPositionClient, isServer, interactDist, context: context);
 		}
 	}
 
-	/// <summary>
-	/// Validates if the performer is in range and capable of interaction -  all the typical requirements for all
-	/// various interactions. Works properly even if player is hidden in a ClosetControl. Can also optionally allow soft crit.
-	///
-	/// </summary>
-	/// <param name="player">player performing the interaction</param>
-	/// <param name="target">target object</param>
-	/// <param name="side">side of the network this is being checked on</param>
-	/// <param name="allowSoftCrit">whether to allow interaction while in soft crit</param>
-	/// <param name="reachRange">range to allow</param>
-	/// <param name="targetVector">target vector pointing from performer to the position they are trying to click,
-	/// if specified will use this to determine if in range rather than target object position.</param>
-	/// <param name="targetRegisterTile">target's register tile component. If you specify this it avoids garbage. Please provide this
-	/// if you can do so without using GetComponent, especially if you are calling this frequently.
-	/// This is an optimization so GetComponent call can be avoided to avoid
-	/// creating garbage.</param>
-	/// <returns></returns>
-	public static bool CanApply(GameObject player, GameObject target, NetworkSide side, bool allowSoftCrit = false,
-		ReachRange reachRange = ReachRange.Standard, Vector2? targetVector = null, RegisterTile targetRegisterTile = null, bool isPlayerClick = false)
+	private static bool ServerCanReachExtended(PlayerScript ps, TransformState state, GameObject context = null)
 	{
-		if (player == null) return false;
-		return CanApply(player.GetComponent<PlayerScript>(), target, side, allowSoftCrit, reachRange, targetVector, targetRegisterTile, isPlayerClick);
+		return ps.IsPositionReachable(state.WorldPosition, true) || ps.IsPositionReachable(state.WorldPosition - (Vector3)state.WorldImpulse, true, 1.75f, context: context);
 	}
 
-	private static bool ServerCanReachExtended(PlayerScript ps, TransformState state)
+	//AiActivate Validation
+	public static bool CanApply(AiActivate toValidate, NetworkSide side, bool lineCast = true)
 	{
-		return ps.IsInReach(state.WorldPosition, true) || ps.IsInReach(state.WorldPosition - (Vector3)state.WorldImpulse, true, 1.75f);
+		return InternalAiActivate(toValidate, side, lineCast);
 	}
 
-	/// <summary>
-	/// Validates if the performer is in range and not in crit for a HandApply interaction.
-	/// </summary>
-	/// <param name="toValidate">interaction to validate</param>
-	/// <param name="side">side of the network this is being checked on</param>
-	/// <param name="allowSoftCrit">whether to allow interaction while in soft crit</param>
-	/// <param name="reachRange">range to allow</param>
-	/// <returns></returns>
-	public static bool CanApply(HandApply toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetObject, side, allowSoftCrit, reachRange, isPlayerClick: isPlayerClick);
+	private static bool InternalAiActivate(AiActivate toValidate, NetworkSide side, bool lineCast = true)
+	{
+		if (side == NetworkSide.Client && PlayerManager.LocalPlayer != toValidate.Performer) return false;
 
-	/// <summary>
-	/// Validates if the performer is in range and not in crit for a PositionalHandApply interaction.
-	/// Range check is based on the target vector of toValidate, not the distance to the object.
-	/// </summary>
-	/// <param name="toValidate">interaction to validate</param>
-	/// <param name="side">side of the network this is being checked on</param>
-	/// <param name="allowSoftCrit">whether to allow interaction while in soft crit</param>
-	/// <param name="reachRange">range to allow</param>
-	/// <returns></returns>
-	public static bool CanApply(PositionalHandApply toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetObject, side, allowSoftCrit, reachRange, toValidate.TargetVector, isPlayerClick: isPlayerClick);
+		//Performer and target cant be null
+		if (toValidate.Performer == null || toValidate.TargetObject == null) return false;
 
-	/// <summary>
-	/// Validates if the performer is in range and not in crit for a TileApply interaction.
-	/// Range check is based on the target vector of toValidate, not the distance to the object.
-	/// </summary>
-	/// <param name="toValidate">interaction to validate</param>
-	/// <param name="side">side of the network this is being checked on</param>
-	/// <param name="allowSoftCrit">whether to allow interaction while in soft crit</param>
-	/// <param name="reachRange">range to allow</param>
-	/// <returns></returns>
-	public static bool CanApply(TileApply toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetInteractableTiles.gameObject, side, allowSoftCrit, reachRange, toValidate.TargetVector, isPlayerClick: isPlayerClick);
+		//Ai's shouldn't be able to interacte with items, only objects
+		if (toValidate.TargetObject.GetComponent<ItemAttributesV2>() != null) return false;
 
-	/// <summary>
-	/// Validates if the performer is in range and not in crit for a MouseDrop interaction.
-	/// </summary>
-	/// <param name="toValidate">interaction to validate</param>
-	/// <param name="side">side of the network this is being checked on</param>
-	/// <param name="allowSoftCrit">whether to allow interaction while in soft crit</param>
-	/// <param name="reachRange">range to allow</param>
-	/// <returns></returns>
-	public static bool CanApply(MouseDrop toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetObject, side, allowSoftCrit, reachRange, isPlayerClick: isPlayerClick);
+		//Has to be Ai to do this interaction
+		if(toValidate.Performer.TryGetComponent<AiPlayer>(out var aiPlayer) == false) return false;
 
-	public static bool CanApply(ConnectionApply toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetObject, side, allowSoftCrit, reachRange, toValidate.TargetVector, isPlayerClick: isPlayerClick);
+		//Only allow interactions if true
+		if (aiPlayer.AllowRemoteAction == false)
+		{
+			if (side == NetworkSide.Client)
+			{
+				Chat.AddExamineMsgToClient("Intelicard remote interactions have been disabled");
+			}
 
-	public static bool CanApply(ContextMenuApply toValidate, NetworkSide side, bool allowSoftCrit = false, ReachRange reachRange = ReachRange.Standard, bool isPlayerClick = false) =>
-		CanApply(toValidate.Performer, toValidate.TargetObject, side, allowSoftCrit, reachRange, isPlayerClick: isPlayerClick);
+			return false;
+		}
+
+		//We should always have a camera location, either core or camera
+		if (aiPlayer.CameraLocation == null) return false;
+
+		var cameraPos = aiPlayer.CameraLocation.position;
+
+		//Distance check to make sure its in range, this wont be called for "saved" cameras
+		if (Vector2.Distance(cameraPos, toValidate.TargetObject.transform.position) > aiPlayer.InteractionDistance) return false;
+
+		if (lineCast == false)
+		{
+			return true;
+		}
+
+		var endPos = toValidate.TargetObject.transform.position;
+
+		//If wall mount calculate to the tile in front of it instead of the wall it is on
+		if (toValidate.TargetObject.TryGetComponent<WallmountBehavior>(out var wall))
+		{
+			endPos = wall.CalculateTileInFrontPos();
+		}
+
+		//Check to see if we can directly hit the target tile
+		if (LineCheck(cameraPos, aiPlayer, endPos, side) == false)
+		{
+			//We didnt hit the target tile so we'll try adding the normalised x or y coords
+			//This is done because the raycast can miss stuff which should be in line of sight
+			//E.g a door on the same axis as the camera would fail usually
+			var normalise = (cameraPos - endPos).normalized;
+
+			//Try x first
+			if (normalise.x != 0)
+			{
+				var newEndPos = endPos;
+				newEndPos.x += normalise.x.RoundToLargestInt();
+
+				if (LineCheck(cameraPos, aiPlayer, newEndPos, side))
+				{
+					//If x passes we dont need to try y
+					return true;
+				}
+			}
+
+			if (normalise.y != 0)
+			{
+				var newEndPos = endPos;
+				newEndPos.y += normalise.y.RoundToLargestInt();
+
+				return LineCheck(cameraPos, aiPlayer, newEndPos, side);
+			}
+
+			//All coords missed, therefore shouldn't be able to interact
+			return false;
+		}
+
+		return true;
+	}
+
+	private static bool LineCheck(Vector3 cameraPos, AiPlayer aiPlayer, Vector3 endPos, NetworkSide side)
+	{
+		//raycast to make sure not hidden
+		var linecast = MatrixManager.Linecast(cameraPos, LayerTypeSelection.Walls, null,
+			endPos);
+
+		//Visualise the interaction on client
+		if (side == NetworkSide.Client)
+		{
+			aiPlayer.ShowInteractionLine(new []{cameraPos, linecast.ItHit ? linecast.HitWorld : endPos}, linecast.ItHit);
+		}
+
+		if (linecast.ItHit && Vector3.Distance(endPos, linecast.HitWorld) > 0.5f) return false;
+
+		return true;
+	}
+
 	#endregion
-
 
 	public static bool IsMineableAt(Vector2 targetWorldPosition, MetaTileMap metaTileMap)
 	{
@@ -573,15 +643,15 @@ public static class Validations
 	{
 		if (toCheck == null)
 		{
-			Logger.LogError("Cannot put item to slot because the item is null", Category.Inventory);
+			Logger.LogError("Cannot put item to slot because the item is null playerScript > " +  playerScript + " itemSlot > " + itemSlot, Category.Inventory);
 			return false;
 		}
-		if (!CanInteract(playerScript.gameObject, side, true))
+		if (CanInteract(playerScript, side, true) == false)
 		{
 			Logger.LogTrace("Cannot put item to slot because the player cannot interact", Category.Inventory);
 			return false;
 		}
-		if (!CanFit(itemSlot, toCheck, side, ignoreOccupied, examineRecipient))
+		if (CanFit(itemSlot, toCheck, side, ignoreOccupied, examineRecipient) == false)
 		{
 			Logger.LogTraceFormat("Cannot put item to slot because the item {0} doesn't fit in the slot {1}", Category.Inventory,
 				toCheck.name, itemSlot);
@@ -686,5 +756,35 @@ public static class Validations
 	public static bool HasTarget(TargetedInteraction interaction)
 	{
 		return interaction.TargetObject != null;
+	}
+
+	/// <summary>
+	/// Validates that the player has at least a hand.
+	/// </summary>
+	/// <param name="player"></param>
+	/// <returns></returns>
+	public static bool HasHand(GameObject player)
+	{
+		if (player.TryGetComponent<LivingHealthMasterBase>(out var health) == false)
+		{
+			return false;
+		}
+
+		return health.HasBodyPart(BodyPartType.LeftArm, true) || health.HasBodyPart(BodyPartType.RightArm, true);
+	}
+
+	/// <summary>
+	/// Validates that the player has both hands.
+	/// </summary>
+	/// <param name="player"></param>
+	/// <returns></returns>
+	public static bool HasBothHands(GameObject player)
+	{
+		if (player.TryGetComponent<LivingHealthMasterBase>(out var health) == false)
+		{
+			return false;
+		}
+
+		return health.HasBodyPart(BodyPartType.LeftArm, true) && health.HasBodyPart(BodyPartType.RightArm, true);
 	}
 }

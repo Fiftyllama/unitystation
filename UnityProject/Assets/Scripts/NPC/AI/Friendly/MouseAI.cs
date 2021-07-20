@@ -1,21 +1,24 @@
+using AddressableReferences;
+using Messages.Server.SoundMessages;
+using NPC.Mood;
 using UnityEngine;
+using Systems.Electricity;
 
-namespace NPC
+namespace Systems.MobAIs
 {
 	/// <summary>
 	/// AI brain for mice
 	/// used to get hunted by Runtime and squeak also annoy engis by chewing cables
 	/// </summary>
-
 	public class MouseAI : GenericFriendlyAI
 	{
 		[SerializeField, Tooltip("If this mouse get to this mood level, it will start chewing cables")]
-		private int angryMouseLevel = -30;
-
-		[SerializeField, Tooltip("Dead mouse item. Don't eat it, please.")]
-		private GameObject deadMouse = null;
+		private int angryMouseLevel = 10;
 
 		private MobMood mood;
+
+		[SerializeField]
+		private AddressableAudioSource squeekSound = null;
 
 		protected override void Awake()
 		{
@@ -25,12 +28,6 @@ namespace NPC
 
 		protected override void MonitorExtras()
 		{
-			if (health.IsDead)
-			{
-				Spawn.ServerPrefab(deadMouse, gameObject.RegisterTile().WorldPosition);
-				Despawn.ServerSingle(gameObject);
-			}
-
 			base.MonitorExtras();
 			// If mouse not happy, mouse chew cable. Feed mouse. Or kill mouse, that would work too.
 			CheckMoodLevel();
@@ -57,15 +54,13 @@ namespace NPC
 
 		private void Squeak()
 		{
-			SoundManager.PlayNetworkedAtPos(
-				"MouseSqueek",
-				gameObject.transform.position,
-				Random.Range(.6f, 1.2f));
+			AudioSourceParameters audioSourceParameters = new AudioSourceParameters(pitch: Random.Range(.6f, 1.2f));
+			SoundManager.PlayNetworkedAtPos(squeekSound, gameObject.transform.position, audioSourceParameters);
 
 			Chat.AddActionMsgToChat(
 				gameObject,
-				$"{mobNameCap} squeaks!",
-				$"{mobNameCap} squeaks!");
+				$"{MobName} squeaks!",
+				$"{MobName} squeaks!");
 		}
 
 		private void DoRandomWireChew()
@@ -74,7 +69,7 @@ namespace NPC
 			var matrix = metaTileMap.Layers[LayerType.Underfloor].matrix;
 
 			// Check if the floor plating is exposed.
-			if (metaTileMap.HasTile(registerObject.LocalPosition, LayerType.Floors, true)) return;
+			if (metaTileMap.HasTile(registerObject.LocalPosition, LayerType.Floors)) return;
 
 			// Check if there's cables at this position
 			var cables = matrix.GetElectricalConnections(registerObject.LocalPosition);
@@ -120,11 +115,6 @@ namespace NPC
 			Squeak();
 		}
 
-		protected override void OnSpawnMob()
-		{
-			base.OnSpawnMob();
-			BeginExploring();
-		}
 
 	}
 }

@@ -7,6 +7,7 @@ using UnityEngine;
 using UnityEditor;
 using Random = UnityEngine.Random;
 using Objects.Science;
+using TileManagement;
 
 namespace Systems.Scenes
 {
@@ -67,12 +68,12 @@ namespace Systems.Scenes
 
 		private void OnEnable()
 		{
-			EventManager.AddHandler(EVENT.RoundStarted, SpawnLavaLand);
+			EventManager.AddHandler(Event.ScenesLoadedServer, SpawnLavaLand);
 		}
 
 		private void OnDisable()
 		{
-			EventManager.RemoveHandler(EVENT.RoundStarted, SpawnLavaLand);
+			EventManager.RemoveHandler(Event.ScenesLoadedServer, SpawnLavaLand);
 		}
 
 		public void SpawnLavaLand()
@@ -93,16 +94,16 @@ namespace Systems.Scenes
 				script.numR = Random.Range(1, 7);
 				script.DoSim();
 			}
-
+			yield return null;
 			tileChangeManager = MatrixManager.Instance.lavaLandMatrix.transform.parent.GetComponent<TileChangeManager>();
 
 			GenerateStructures();
-
+			yield return null;
 			MatrixManager.Instance.lavaLandMatrix.transform.parent.GetComponent<OreGenerator>().RunOreGenerator();
 
 			SetQuantumPads();
 
-			Debug.Log("Finished generating LavaLand");
+			Logger.Log("Finished generating LavaLand", Category.Round);
 
 			yield break;
 		}
@@ -144,12 +145,14 @@ namespace Systems.Scenes
 			{
 				var SO = GetCorrectSOFromSize(keyValuePair.Value);
 				if (SO == null) continue;
+				if(keyValuePair.Key == null) continue;
 
 				dataList = SO.AreaPrefabData.ToList();
 
 				foreach (var data in dataList.Shuffle())
 				{
 					if (data.isSpecialSite && !keyValuePair.Key.allowSpecialSites) continue;
+					if (data.AreaPrefab == null) continue;
 
 					//Prefab cache
 					if (PrefabsUsed.ContainsKey(data.AreaPrefab))

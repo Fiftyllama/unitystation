@@ -1,7 +1,11 @@
 using System.Collections.Generic;
+using Systems.Clearance;
+using AddressableReferences;
+using NaughtyAttributes;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Serialization;
+using ScriptableObjects.Systems.Spells;
 
 /// <summary>
 /// Defines all aspects of a particular occupation
@@ -17,6 +21,16 @@ public class Occupation : ScriptableObject
 	[Tooltip("Type of occupation.")]
 	private JobType jobType = JobType.NULL;
 	public JobType JobType => jobType;
+
+	[Tooltip("Whether this is a crew role (to add to crew manifest, security records etc)")]
+	[SerializeField]
+	private bool isCrewmember = true;
+	public bool IsCrewmember => isCrewmember;
+
+	[Tooltip("Whether a late spawn should arrive on the arrivals shuttle or their unique spawn point")]
+	[SerializeField]
+	private bool lateSpawnIsArrivals = true;
+	public bool LateSpawnIsArrivals => lateSpawnIsArrivals;
 
 	[FormerlySerializedAs("InventoryPopulator")]
 	[SerializeField]
@@ -42,6 +56,23 @@ public class Occupation : ScriptableObject
 	[Tooltip("Default access allowed for this occupation.")]
 	private List<Access> allowedAccess = null;
 	public List<Access> AllowedAccess => allowedAccess;
+
+	[SerializeField]
+	[Tooltip("Default clearance issued to this occupation.")]
+	private List<Clearance> issuedClearance = default;
+	public List<Clearance> IssuedClearance
+	{
+		get => issuedClearance;
+		set => issuedClearance = value; //Change me to read only when we're ready migrating!
+	}
+
+	[SerializeField] [Tooltip("Default clearance issued to this occupation when round is LowPop.")]
+	private List<Clearance> issuedLowPopClearance = default;
+	public List<Clearance> IssuedLowPopClearance
+	{
+		get => issuedLowPopClearance;
+		set => issuedLowPopClearance = value; //Change me to read only when we're ready migrating!
+	}
 
 	[SerializeField]
 	[Tooltip("Default spells available for this occupation.")]
@@ -115,4 +146,35 @@ public class Occupation : ScriptableObject
 	[SerializeField] private bool isTargeteable=true;
 
 	public bool IsTargeteable => isTargeteable;
+
+	[BoxGroup("Spawn Banner")]
+	[Tooltip("Should this occupation play a sound cue on spawn?")]
+	[SerializeField]
+	private bool playSound = false;
+	public bool PlaySound => playSound;
+
+	[BoxGroup("Spawn Banner")]
+	[ShowIf(nameof(playSound))]
+	[Tooltip("The sound a player hears when they spawn as this occupation.")]
+	[SerializeField]
+	private AddressableAudioSource spawnSound = null;
+
+	public AddressableAudioSource SpawnSound => spawnSound;
+
+	[BoxGroup("Spawn Banner")]
+	[Tooltip("What color should the text in the spawn banner be for this occupation.")]
+	[SerializeField]
+	private Color textColor = Color.red;
+	public Color TextColor => textColor;
+
+	[BoxGroup("Spawn Banner")]
+	[Tooltip("The color for the background of the banner")]
+	[SerializeField]
+	private Color backgroundColor = Color.red;
+	public Color BackgroundColor => backgroundColor;
+
+	[Header("If used will spawn player using this prefab instead of human body.")]
+	[SerializeField]
+	private GameObject specialPlayerPrefab = null;
+	public GameObject SpecialPlayerPrefab => specialPlayerPrefab;
 }

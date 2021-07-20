@@ -1,4 +1,5 @@
-﻿using PathFinding;
+﻿using HealthV2;
+using PathFinding;
 using ScriptableObjects.Gun;
 using UnityEngine;
 
@@ -20,25 +21,45 @@ namespace Weapons.Projectiles.Behaviours
 			this.targetZone = targetZone;
 		}
 
-		public bool OnHit(RaycastHit2D hit)
+		public bool OnHit(MatrixManager.CustomPhysicsHit hit)
 		{
 			return TryDamage(hit);
 		}
 
-		private bool TryDamage(RaycastHit2D hit)
+		private bool TryDamage(MatrixManager.CustomPhysicsHit hit)
 		{
-			var coll = hit.collider;
+			var coll = hit.CollisionHit.GameObject;
+			if (coll == null) return false;
+
+			//TODO REMOVE AFTER SWITCHING MOBS TO LivingHealthMasterBase or else guns wont kill them
 			var livingHealth = coll.GetComponent<LivingHealthBehaviour>();
-			if (livingHealth == null) return false;
+			if (livingHealth != null)
+			{
+				livingHealth.ApplyDamageToBodyPart(shooter, damageData.Damage, damageData.AttackType, damageData.DamageType, targetZone);
 
 
-			livingHealth.ApplyDamageToBodypart(shooter, damageData.Damage, damageData.AttackType, damageData.DamageType, targetZone);
+				Chat.AddThrowHitMsgToChat(gameObject, coll.gameObject, targetZone);
+				Logger.LogTraceFormat("Hit {0} for {1} with HealthBehaviour! bullet absorbed", Category.Firearms,
+					livingHealth.gameObject.name, damageData.Damage);
 
-			Chat.AddThrowHitMsgToChat(gameObject, coll.gameObject, targetZone);
-			Logger.LogTraceFormat("Hit {0} for {1} with HealthBehaviour! bullet absorbed", Category.Firearms,
-				livingHealth.gameObject.name, damageData.Damage);
+				return true;
+			}
 
-			return true;
+			//TODO REMOVE AFTER SWITCHING MOBS TO
+			var health = coll.GetComponent<LivingHealthMasterBase>();
+			if (health != null)
+			{
+				health.ApplyDamageToBodyPart(shooter, damageData, targetZone);
+
+				Chat.AddThrowHitMsgToChat(gameObject, coll.gameObject, targetZone);
+				Logger.LogTraceFormat("Hit {0} for {1} with HealthBehaviour! bullet absorbed", Category.Firearms,
+					health.gameObject.name, damageData.Damage);
+
+				return true;
+			}
+
+
+			return false;
 		}
 
 		private void OnDisable()

@@ -1,7 +1,8 @@
 ﻿using UnityEngine;
 using UnityEngine.UI;
-using UnityEngine.EventSystems;
 
+namespace UI
+{
 	public class ZoneSelector : TooltipMonoBehaviour
 	{
 		public Sprite[] selectorSprites;
@@ -19,7 +20,7 @@ using UnityEngine.EventSystems;
 		/// </summary>
 		public void SelectAction(int curSelect)
 		{
-			SelectAction((BodyPartType) curSelect);
+			SelectAction((BodyPartType)curSelect);
 		}
 
 		/// <summary>
@@ -29,28 +30,33 @@ using UnityEngine.EventSystems;
 		{
 			if (clickSound)
 			{
-				SoundManager.Play("Click01");
+				_ = SoundManager.Play(SingletonSOSounds.Instance.Click01);
 			}
 			selImg.sprite = selectorSprites[(int)curSelect];
 			UIManager.DamageZone = curSelect;
 		}
 
-		/// <summary>
-		/// Cycles through head -> eyes -> mouth -> head for hotkey targeting
-		/// </summary>
-		public void CycleHead()
+		public void CycleZones(params BodyPartType[] zones)
 		{
-			switch (UIManager.DamageZone)
+			if (zones.Length == 0)
+				return;
+
+			if (zones.Length == 1)
 			{
-				case BodyPartType.Head:
-					SelectAction(BodyPartType.Eyes);
-					break;
-				case BodyPartType.Eyes:
-					SelectAction(BodyPartType.Mouth);
-					break;
-				default:
-					SelectAction(BodyPartType.Head);
-					break;
+				SelectAction(zones[0]);
+				return;
 			}
+
+			for (int i = 0; i < zones.Length - 1; i++)
+			{
+				if (zones[i] == UIManager.DamageZone)
+				{
+					SelectAction(zones[i + 1]);
+					return;
+				}
+			}
+
+			SelectAction(zones[0]);
 		}
 	}
+}

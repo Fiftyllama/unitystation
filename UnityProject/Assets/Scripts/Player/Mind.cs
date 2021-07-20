@@ -4,24 +4,31 @@ using System.Collections.ObjectModel;
 using UnityEngine;
 using Mirror;
 using Antagonists;
-using Object = UnityEngine.Object;
+using Systems.Spells;
+using HealthV2;
+using Player;
+using ScriptableObjects.Audio;
+using UI.Action;
+using ScriptableObjects.Systems.Spells;
 
 /// <summary>
 /// IC character information (job role, antag info, real name, etc). A body and their ghost link to the same mind
+/// SERVER SIDE VALID ONLY, is not sync'd
 /// </summary>
 public class Mind
 {
 	public Occupation occupation;
 	public PlayerScript ghost;
 	public PlayerScript body;
-	private SpawnedAntag Antag;
-	public bool IsAntag => Antag != null;
+	private SpawnedAntag antag;
+	public bool IsAntag => antag != null;
 	public bool IsGhosting;
 	public bool DenyCloning;
 	public int bodyMobID;
-	public StepType stepType = StepType.Barefoot;
+	public FloorSounds StepSound;
+	public FloorSounds SecondaryStepSound;
 	public ChatModifier inventorySpeechModifiers = ChatModifier.None;
-	//Current way to check if it's not actually a ghost but a spectator, should set this not have it be the below.
+	// Current way to check if it's not actually a ghost but a spectator, should set this not have it be the below.
 	public bool IsSpectator => occupation == null || body == null;
 
 	public bool ghostLocked;
@@ -40,10 +47,10 @@ public class Mind
 		set => SetProperty("vowOfSilence", value);
 	}
 
-	//use Create to create a mind.
+	// use Create to create a mind.
 	private Mind()
 	{
-		//add spell to the UI bar as soon as they're added to the spell list
+		// add spell to the UI bar as soon as they're added to the spell list
 		spells.CollectionChanged += (sender, e) =>
 		{
 			if (e == null)
@@ -90,16 +97,22 @@ public class Mind
 		var playerScript = player.GetComponent<PlayerScript>();
 		var mind = new Mind { };
 		playerScript.mind = mind;
-		//Forces you into ghosting, the IsGhosting field should make it so it never points to Body
+		// Forces you into ghosting, the IsGhosting field should make it so it never points to Body
 		mind.Ghosting(player);
 	}
 
 	public void SetNewBody(PlayerScript playerScript)
 	{
 		Spells.Clear();
+		ClearOldBody();
 		playerScript.mind = this;
 		body = playerScript;
-		bodyMobID = playerScript.GetComponent<LivingHealthBehaviour>().mobID;
+
+		if (playerScript.TryGetComponent<LivingHealthMasterBase>(out var health))
+		{
+			bodyMobID = health.mobID;
+		}
+
 		if (occupation != null)
 		{
 			foreach (var spellData in occupation.Spells)
@@ -116,13 +129,22 @@ public class Mind
 		StopGhosting();
 	}
 
+	private void ClearOldBody()
+	{
+		if (body)
+		{
+			body.mind = null;
+		}
+	}
+
 	/// <summary>
 	/// Make this mind a specific spawned antag
 	/// </summary>
 	public void SetAntag(SpawnedAntag newAntag)
 	{
-		Antag = newAntag;
+		antag = newAntag;
 		ShowObjectives();
+		body.OrNull()?.GetComponent<PlayerOnlySyncValues>().OrNull()?.ServerSetAntag(true);
 	}
 
 	/// <summary>
@@ -130,7 +152,8 @@ public class Mind
 	/// </summary>
 	public void RemoveAntag()
 	{
-		Antag = null;
+		antag = null;
+		body.OrNull()?.GetComponent<PlayerOnlySyncValues>().OrNull()?.ServerSetAntag(true);
 	}
 
 	public GameObject GetCurrentMob()
@@ -164,7 +187,7 @@ public class Mind
 	public CloneableStatus GetCloneableStatus(int recordMobID)
 	{
 		if (bodyMobID != recordMobID)
-		{  //an old record might still exist even after several body swaps
+		{  // an old record might still exist even after several body swaps
 			return CloneableStatus.OldRecord;
 		}
 		if (DenyCloning)
@@ -172,15 +195,15 @@ public class Mind
 			return CloneableStatus.DenyingCloning;
 		}
 		var currentMob = GetCurrentMob();
-		if (!IsGhosting)
+		if (IsGhosting == false)
 		{
-			var livingHealthBehaviour = currentMob.GetComponent<LivingHealthBehaviour>();
-			if (!livingHealthBehaviour.IsDead)
+			var livingHealthBehaviour = currentMob.GetComponent<LivingHealthMasterBase>();
+			if (livingHealthBehaviour.IsDead == false)
 			{
 				return CloneableStatus.StillAlive;
 			}
 		}
-		if (!IsOnline())
+		if (IsOnline() == false)
 		{
 			return CloneableStatus.Offline;
 		}
@@ -199,8 +222,9 @@ public class Mind
 	/// </summary>
 	public void ShowObjectives()
 	{
-		if (!IsAntag) return;
-		Chat.AddExamineMsgFromServer(body.gameObject, Antag.GetObjectivesForPlayer());
+		if (IsAntag == false) return;
+
+		Chat.AddExamineMsgFromServer(GetCurrentMob(), antag.GetObjectivesForPlayer());
 	}
 
 	/// <summary>
@@ -208,7 +232,18 @@ public class Mind
 	/// </summary>
 	public SpawnedAntag GetAntag()
 	{
-		return Antag;
+		return antag;
+	}
+
+	/// <summary>
+	/// Returns true if the given mind is of the given Antagonist type.
+	/// </summary>
+	/// <typeparam name="T">The type of antagonist to check against</typeparam>
+	public bool IsOfAntag<T>() where T : Antagonist
+	{
+		if (IsAntag == false) return false;
+
+		return antag.Antagonist is T;
 	}
 
 	public void AddSpell(Spell spell)
@@ -225,6 +260,32 @@ public class Mind
 		if (spells.Contains(spell))
 		{
 			spells.Remove(spell);
+		}
+	}
+
+	public Spell GetSpellInstance(SpellData spellData)
+	{
+		foreach (Spell spell in Spells)
+		{
+			if (spell.SpellData == spellData)
+			{
+				return spell;
+			}
+		}
+
+		return default;
+	}
+
+	public bool HasSpell(SpellData spellData)
+	{
+		return GetSpellInstance(spellData) != null;
+	}
+
+	public void ResendSpellActions()
+	{
+		foreach (Spell spell in Spells)
+		{
+			UIActionManager.Toggle(spell, true, body.gameObject);
 		}
 	}
 

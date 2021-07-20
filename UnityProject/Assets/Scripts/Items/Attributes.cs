@@ -1,14 +1,12 @@
-using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.Linq;
+using Messages.Client.Interaction;
 using UnityEngine;
 using Mirror;
 
 
 [RequireComponent(typeof(Integrity))]
 [RequireComponent(typeof(CustomNetTransform))]
-public class Attributes : NetworkBehaviour, IRightClickable, IExaminable, IServerSpawn
+public class Attributes : NetworkBehaviour, IRightClickable, IExaminable
 {
 
 	[Tooltip("Display name of this item when spawned.")]
@@ -37,20 +35,19 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable, IServe
 	[Tooltip("How much does one of these sell for when shipped on the cargo shuttle?")]
 	[SerializeField]
 	private int exportCost = 0;
+
 	public int ExportCost
 	{
 		get
 		{
-			var stackable = GetComponent<Stackable>();
-
-			if (stackable != null)
+			if (TryGetComponent<Stackable>(out var stackable))
 			{
-				return exportCost * stackable.Amount;
+				int amount = Application.isEditor ? stackable.InitialAmount : stackable.Amount;
+				return exportCost * amount;
 			}
 
 			return exportCost;
 		}
-
 	}
 
 	[Tooltip("Should an alternate name be used when displaying this in the cargo console report?")]
@@ -62,6 +59,12 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable, IServe
 	[SerializeField]
 	private string exportMessage = null;
 	public string ExportMessage => exportMessage;
+
+	[Server]
+	public void SetExportCost(int value)
+	{
+		exportCost = value;
+	}
 
 	[SyncVar(hook = nameof(SyncArticleDescription))]
 	private string articleDescription;
@@ -78,11 +81,11 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable, IServe
 		base.OnStartClient();
 	}
 
-
-	public virtual void OnSpawnServer(SpawnInfo info)
+	public override void OnStartServer()
 	{
 		SyncArticleName(articleName, initialName);
 		SyncArticleDescription(articleDescription, initialDescription);
+		base.OnStartServer();
 	}
 
 	private void SyncArticleName(string oldName, string newName)
@@ -122,8 +125,7 @@ public class Attributes : NetworkBehaviour, IRightClickable, IExaminable, IServe
 		if (string.IsNullOrWhiteSpace(displayName)) displayName = "error";
 
 		UIManager.SetToolTip =
-			displayName.First().ToString().ToUpper() + displayName.Substring(1) +
-			(string.IsNullOrEmpty(articleDescription) ? "" : $" ({ articleDescription })");
+			displayName.First().ToString().ToUpper() + displayName.Substring(1);
 	}
 
 	public void OnHoverEnd()

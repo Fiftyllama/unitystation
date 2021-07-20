@@ -3,9 +3,12 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using Doors;
+using Items;
+using Messages.Server;
 using UnityEngine;
 using UnityEngine.Events;
 using Objects;
+using ScriptableObjects.Audio;
 
 public partial class PlayerSync
 {
@@ -193,7 +196,7 @@ public partial class PlayerSync
 	/// (turns on tile snapping and removes player collision check)</param>
 	/// <returns>true if push was successful</returns>
 	[Server]
-	public bool Push(Vector2Int direction, float speed = Single.NaN, bool followMode = false, bool ignorePassable = false)
+	public bool Push(Vector2Int direction, float speed = Single.NaN, bool followMode = false, bool ignorePassable = false, GameObject context = null)
 	{
 		//if we are buckled, transfer the impulse to our buckled object.
 		if (playerMove.IsBuckled)
@@ -227,7 +230,7 @@ public partial class PlayerSync
 		Vector3Int origin = ServerPosition;
 		Vector3Int pushGoal = origin + direction.To3Int();
 
-		if (!ignorePassable && !MatrixManager.IsPassableAt(origin, pushGoal, isServer: true, includingPlayers: !followMode))
+		if (!ignorePassable && !MatrixManager.IsPassableAtAllMatrices(origin, pushGoal, isServer: true, includingPlayers: !followMode))
 		{
 			return false;
 		}
@@ -293,7 +296,7 @@ public partial class PlayerSync
 		var newState = new PlayerState
 		{
 			MoveNumber = 0,
-			WorldImpulse = direction,
+			WorldImpulse = Vector2.zero,
 			MatrixId = newMatrix.Id,
 			WorldPosition = pushGoal,
 			ImportantFlightUpdate = true,
@@ -413,6 +416,7 @@ public partial class PlayerSync
 			pushPull.InformHead(pushPull.PulledBy);
 			//			InformPullMessage.Send( pushPull.PulledBy, this.pushPull, pushPull.PulledBy );
 		}
+		UpdateClientState(serverState);
 	}
 
 	/// Clears server pending actions queue
@@ -443,6 +447,7 @@ public partial class PlayerSync
 
 	/// Tries to assign next target from queue to serverTargetState if there are any
 	/// (In order to start lerping towards it)
+	/// do not loop
 	[Server]
 	private void TryUpdateServerTarget()
 	{
@@ -480,7 +485,6 @@ public partial class PlayerSync
 			SyncMatrix();
 		}
 
-		TryUpdateServerTarget();
 		//Logger.Log($"Server Updated target {serverTargetState}. {serverPendingActions.Count} pending");
 	}
 
@@ -488,16 +492,8 @@ public partial class PlayerSync
 	[Server]
 	private PlayerState NextStateServer(PlayerState state, PlayerAction action)
 	{
-		//movement not allowed when buckled
-		if (playerMove.IsBuckled)
-		{
-			Logger.LogWarning($"Ignored {action}: player is bucked, rolling back!", Category.Movement);
-			RollbackPosition();
-			return state;
-		}
-
 		// if player is in RCS mode and MatrixMove is not null
-		if(playerScript.RcsMode && playerScript.RcsMatrixMove)
+		if (playerScript.RcsMode && playerScript.RcsMatrixMove)
 		{
 			Vector2Int dir = action.Direction();
 			// try to move shuttle on server side
@@ -507,20 +503,28 @@ public partial class PlayerSync
 			return state;
 		}
 
+		//movement not allowed when buckled
+		if (playerMove.IsBuckled)
+		{
+			Logger.LogWarning($"Ignored {action}: player is bucked, rolling back!", Category.Movement);
+			RollbackPosition();
+			return state;
+		}
+
 		//Check if there is a bump interaction according to the server
 		BumpType serverBump = CheckSlideAndBump(state, isServer: true, ref action);
 
 		//Client only needs to check whether movement was prevented, specific type of bump doesn't matter
 		bool isClientBump = action.isBump;
 
-		if (!playerScript.playerHealth || !playerScript.playerHealth.IsSoftCrit)
+		if (!playerScript.playerHealth || !playerScript.registerTile.IsLayingDown)
 		{
-			SpeedServer = action.isRun ? playerMove.RunSpeed : playerMove.WalkSpeed;
+			SpeedServer = ActionSpeed(action);
 		}
 
 		//we only lerp back if the client thinks it's passable  but server does not...if client
 		//thinks it's not passable and server thinks it's passable, then it's okay to let the client continue
-		if (!isClientBump && serverBump != BumpType.None && serverBump != BumpType.Swappable)
+		if (isClientBump == false && serverBump != BumpType.None && serverBump != BumpType.Swappable)
 		{
 			Logger.LogWarningFormat("isBump mismatch, resetting: C={0} S={1}", Category.Movement, isClientBump, serverBump != BumpType.None);
 			RollbackPosition();
@@ -582,14 +586,13 @@ public partial class PlayerSync
 			return state;
 		}
 
-		PlayerState nextState = NextState(state, action, true);
+		var nextState = NextState(state, action, true);
 
 		nextState.Speed = SpeedServer;
-		if (!playerScript.IsGhost)
-		{
-			playerScript.OnTileReached().Invoke(nextState.WorldPosition.RoundToInt());
-			SoundManager.FootstepAtPosition(nextState.WorldPosition, playerScript.mind.stepType, gameObject);
-		}
+		if (playerScript.IsGhost) return nextState;
+
+		playerScript.OnTileReached().Invoke(nextState.WorldPosition.RoundToInt());
+		FootstepSounds.PlayerFootstepAtPosition(nextState.WorldPosition, this);
 
 		return nextState;
 	}
@@ -602,7 +605,7 @@ public partial class PlayerSync
 	{
 		if (pushable && pushable.TryGetComponent(out PushPull pushPull))
 		{
-			if (Validations.CanInteract(playerScript, NetworkSide.Server) || pushPull && !playerScript.IsInReach(pushPull.registerTile, true))
+			if (Validations.CanInteract(playerScript, NetworkSide.Server) || pushPull && !playerScript.IsRegisterTileReachable(pushPull.registerTile, true))
 			{
 				questionablePushables.Add(pushPull);
 				Logger.LogWarningFormat("Added questionable {0}", Category.PushPull, pushPull);
@@ -647,6 +650,16 @@ public partial class PlayerSync
 
 		//		Logger.LogTraceFormat( "{0} Interacting {1}->{2}, server={3}", Category.Movement, Time.unscaledTime*1000, worldPos, worldTarget, isServer );
 		InteractPushable(worldPos, direction);
+
+		//Bump all objects with IBumpObject interface
+		foreach (var objectOnTile in MatrixManager.GetAt<ObjectBehaviour>(worldTarget, true))
+		{
+			var bumpAbles = objectOnTile.GetComponents<IBumpableObject>();
+			foreach (var bump in bumpAbles)
+			{
+				bump.OnBump(gameObject);
+			}
+		}
 
 		yield return WaitFor.Seconds(.1f);
 	}
@@ -721,10 +734,34 @@ public partial class PlayerSync
 		{
 			return;
 		}
-		List<PushPull> pushables = MatrixManager.GetPushableAt(worldOrigin, direction.To2Int(), gameObject, isServer: true);
+
+		Vector2Int twoIntDirection = direction.To2Int();
+		Vector3Int pushableLocation = worldOrigin + (Vector3Int)twoIntDirection;
+
+		List<PushPull> pushables = MatrixManager.GetPushableAt(worldOrigin, twoIntDirection, gameObject, true, true);
 		if (pushables.Count > 0)
 		{
-			pushables[0].TryPush(direction.To2Int());
+			foreach ( PushPull pushable in pushables)
+			{
+				// whether or not we actually manage to push it, make sure we aren't pulling it!
+				if (pushPull.PulledObjectServer == pushable)
+				{
+					pushPull.ServerStopPulling();
+				}
+
+				// if player can't reach, player can't push
+				if (MatrixManager.IsPassableAtAllMatrices(worldOrigin, pushableLocation, isServer: true, includingPlayers: false,
+						context: pushable.gameObject, isReach: true) == false)
+				{
+					continue;
+				}
+
+				// Try pushables until we get one that moves
+				if (pushable.TryPush(twoIntDirection))
+				{
+					break;
+				}
+			}
 		}
 	}
 
@@ -834,7 +871,7 @@ public partial class PlayerSync
 		{
 			var worldOrigin = ServerPosition;
 			var worldTarget = worldOrigin + serverState.WorldImpulse.RoundToInt();
-			if (registerPlayer.IsSlippingServer && MatrixManager.IsPassableAt(worldOrigin, worldTarget, true))
+			if (registerPlayer.IsSlippingServer && MatrixManager.IsPassableAtAllMatrices(worldOrigin, worldTarget, true))
 			{
 				Logger.LogFormat("Letting stunned {0} fly onto {1}", Category.Movement, gameObject.name, worldTarget);
 				return;
@@ -946,9 +983,14 @@ public partial class PlayerSync
 		CheckTileContagion();
 		CheckTileSlip();
 
-		var shoeSlot = playerScript.ItemStorage.GetNamedItemSlot(NamedSlot.feet);
-
-		bool slipProtection = !shoeSlot.IsEmpty && shoeSlot.ItemAttributes.HasTrait(CommonTraits.Instance.NoSlip);
+		bool slipProtection = true;
+		foreach (var itemSlot in playerScript.DynamicItemStorage.GetNamedItemSlots(NamedSlot.feet))
+		{
+			if (itemSlot.ItemAttributes == null || itemSlot.ItemAttributes.HasTrait(CommonTraits.Instance.NoSlip) == false)
+			{
+				slipProtection = false;
+			}
+		}
 
 		if (slipProtection) return;
 		var crossedItems = MatrixManager.GetAt<ItemAttributesV2>(position, true);
@@ -957,18 +999,27 @@ public partial class PlayerSync
 			if (crossedItem.HasTrait(CommonTraits.Instance.Slippery))
 			{
 				registerPlayer.ServerSlip(slipWhileWalking: true);
+				if (crossedItem.HasTrait(CommonTraits.Instance.BluespaceActivity))
+				{
+					//TODO: Replace call with one that passes in potency once potency is trackable
+					registerPlayer.ServerBluespaceActivity();
+				}
 			}
 		}
 	}
 
 	public void CheckTileSlip()
 	{
-
 		var matrix = MatrixManager.Get(serverState.MatrixId);
 
-		var shoeSlot = playerScript.ItemStorage.GetNamedItemSlot(NamedSlot.feet);
-
-		bool slipProtection = !shoeSlot.IsEmpty && shoeSlot.ItemAttributes.HasTrait(CommonTraits.Instance.NoSlip);
+		bool slipProtection = true;
+		foreach (var itemSlot in playerScript.DynamicItemStorage.GetNamedItemSlots(NamedSlot.feet))
+		{
+			if (itemSlot.ItemAttributes == null || itemSlot.ItemAttributes.HasTrait(CommonTraits.Instance.NoSlip) == false)
+			{
+				slipProtection = false;
+			}
+		}
 
 		if (matrix.MetaDataLayer.IsSlipperyAt(ServerLocalPosition) && !slipProtection)
 		{

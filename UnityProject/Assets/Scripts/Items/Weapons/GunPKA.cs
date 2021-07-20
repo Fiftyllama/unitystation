@@ -1,37 +1,59 @@
 ﻿using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using Weapons;
+using AddressableReferences;
 
-public class GunPKA : Gun
+namespace Weapons
 {
-
-	bool allowRecharge = true;
-	public float rechargeTime = 2.0f;
-	public override void ServerPerformInteraction(AimApply interaction)
+	public class GunPKA : Gun
 	{
-		var isSuicide = false;
-		if (interaction.MouseButtonState == MouseButtonState.PRESS ||
-		    (WeaponType != WeaponType.SemiAutomatic && AllowSuicide))
+		[SerializeField]
+		private GameObject projectile;
+
+		private bool allowRecharge = true;
+		private float rechargeTime = 2.0f;
+
+		public override void OnSpawnServer(SpawnInfo info)
 		{
-			isSuicide = interaction.IsAimingAtSelf;
-			AllowSuicide = isSuicide;
+			base.OnSpawnServer(info);
+			CurrentMagazine.containedBullets[0] = projectile;
+			CurrentMagazine.ServerSetAmmoRemains(1);
 		}
 
-		//enqueue the shot (will be processed in Update)
-		ServerShoot(interaction.Performer, interaction.TargetVector.normalized, UIManager.DamageZone, isSuicide);
-
-		if (allowRecharge)
+		public override bool WillInteract(AimApply interaction, NetworkSide side)
 		{
-			StartCoroutine(StartCooldown());
+			CurrentMagazine.containedBullets[0] = projectile;
+			return base.WillInteract(interaction, side);
 		}
-	}
-	private IEnumerator StartCooldown()
-	{
-		allowRecharge = false;
-		yield return WaitFor.Seconds(rechargeTime);
-		CurrentMagazine.ExpendAmmo(-1);
-		SoundManager.PlayNetworkedAtPos("ReloadKinetic", gameObject.AssumedWorldPosServer(), sourceObj: serverHolder);
-		allowRecharge = true;
+
+		public override void ServerPerformInteraction(AimApply interaction)
+		{
+			if (allowRecharge)
+			{
+				//enqueue the shot (will be processed in Update)
+				base.ServerPerformInteraction(interaction);
+				StartCoroutine(StartCooldown());
+			}
+		}
+
+		private IEnumerator StartCooldown()
+		{
+			allowRecharge = false;
+			yield return WaitFor.Seconds(rechargeTime);
+			CurrentMagazine.ServerSetAmmoRemains(1);
+			CurrentMagazine.LoadProjectile(projectile, 1);
+			if (IsSuppressed)
+			{
+				if (serverHolder != null)
+				{
+					Chat.AddExamineMsgFromServer(serverHolder, $"The {gameObject.ExpensiveName()} silently recharges.");
+				}
+			}
+			else
+			{
+				SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.KineticReload, gameObject.AssumedWorldPosServer(), sourceObj: serverHolder);
+			}
+			allowRecharge = true;
+		}
 	}
 }

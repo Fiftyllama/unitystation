@@ -2,108 +2,132 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+using NaughtyAttributes;
+using ScriptableObjects;
+using UI.Core.Windows;
+using UI.Windows;
+using Systems.Teleport;
+using AdminCommands;
+using Effects;
+using DatabaseAPI;
 
-public class UI_GhostOptions : MonoBehaviour
+namespace UI.Systems.Ghost
 {
-	[SerializeField] private Text ghostHearText = null;
-	[SerializeField] private GameObject teleportButtonList = null;
-
-	private bool TeleportScreenOpen = false;
-	private bool PlacesTeleportScreenOpen = false;
-
-	void OnEnable()
+	public class UI_GhostOptions : MonoBehaviour
 	{
-		DetermineGhostHearText();
-	}
+		[SerializeField]
+		private Text ghostHearText = null;
+		[SerializeField, BoxGroup("Ghost Role Button")]
+		private AnimateIcon ghostRoleAnimator = default;
+		[SerializeField, BoxGroup("Ghost Role Button")]
+		private SpriteHandler ghostRoleSpriteHandler = default;
 
-	public void JumpToMob()
-	{
-		if (TeleportScreenOpen == true)// close screen if true
+		private TeleportWindow TeleportWindow => UIManager.TeleportWindow;
+		private GhostRoleWindow GhostRoleWindow => UIManager.GhostRoleWindow;
+
+		public GameObject AdminGhostInventory;
+
+		private bool roleBtnAnimating = false;
+
+		private void OnEnable()
 		{
-			teleportButtonList.SetActive(false);
-			TeleportScreenOpen = false;
+			TeleportWindow.onTeleportRequested += TeleportUtils.TeleportLocalGhostTo;
+			TeleportWindow.onTeleportToVector += TeleportUtils.TeleportLocalGhostTo;
+			DetermineGhostHearText();
 		}
-		else if (TeleportScreenOpen == false & PlacesTeleportScreenOpen == true)//switches to mob screen from places if true
+
+		private void OnDisable()
 		{
-			TeleportScreenOpen = true;
-			PlacesTeleportScreenOpen = false;
-			GetComponentInChildren<TeleportButtonControl>().GenButtons();
+			TeleportWindow.onTeleportRequested -= TeleportUtils.TeleportLocalGhostTo;
+			TeleportWindow.onTeleportToVector -= TeleportUtils.TeleportLocalGhostTo;
 		}
-		else//opens screen
+
+		public void JumpToMob()
 		{
-			teleportButtonList.SetActive(true);
-			TeleportScreenOpen = true;
-			GetComponentInChildren<TeleportButtonControl>().GenButtons();
+			TeleportWindow.SetWindowTitle("Jump To Mob");
+			TeleportWindow.gameObject.SetActive(true);
+			TeleportWindow.GenerateButtons(TeleportUtils.GetMobDestinations());
 		}
-	}
 
-	public void Orbit()
-	{
-	}
+		public void Orbit() { }
 
-	public void ReenterCorpse()
-	{
-		PlayerManager.LocalPlayerScript.playerNetworkActions.CmdGhostCheck();
-	}
-
-	public void Teleport()
-	{
-		if (PlacesTeleportScreenOpen == true)//Close screen if true
+		public void ReenterCorpse()
 		{
-			teleportButtonList.SetActive(false);
-			PlacesTeleportScreenOpen = false;
+			PlayerManager.LocalPlayerScript.playerNetworkActions.CmdGhostCheck();
 		}
-		else if (PlacesTeleportScreenOpen == false & TeleportScreenOpen == true)// switches to Place Teleport if mob teleport is open
+
+		public void Teleport()
 		{
-			PlacesTeleportScreenOpen = true;
-			TeleportScreenOpen = false;
-			GetComponentInChildren<TeleportButtonControl>().PlacesGenButtons();
+			TeleportWindow.SetWindowTitle("Jump to Place");
+			TeleportWindow.gameObject.SetActive(true);
+			TeleportWindow.GenerateButtons(TeleportUtils.GetSpawnDestinations());
 		}
-		else//opens screen
+
+		public void GhostRoleBtn()
 		{
-			teleportButtonList.SetActive(true);
-			PlacesTeleportScreenOpen = true;
-			GetComponentInChildren<TeleportButtonControl>().PlacesGenButtons();
+			GhostRoleWindow.gameObject.SetActive(!GhostRoleWindow.gameObject.activeSelf);
 		}
-	}
 
-	public void pAIcandidate()
-	{
-	}
-
-	public void Respawn()
-	{
-		PlayerManager.LocalPlayerScript.playerNetworkActions.CmdRespawnPlayer();
-	}
-
-	public void ToggleAllowCloning()
-	{
-		PlayerManager.LocalPlayerScript.playerNetworkActions.CmdToggleAllowCloning();
-	}
-
-	public void ToggleGhostHearRange()
-	{
-		Chat.Instance.GhostHearAll = !Chat.Instance.GhostHearAll;
-		DetermineGhostHearText();
-	}
-
-	void DetermineGhostHearText()
-	{
-		if (Chat.Instance.GhostHearAll)
+		public void Respawn()
 		{
-			ghostHearText.text = "HEAR\r\n \r\nLOCAL";
+			PlayerManager.LocalPlayerScript.playerNetworkActions.CmdRespawnPlayer(ServerData.UserID, PlayerList.Instance.AdminToken);
+			Camera.main.GetComponent<CameraEffects.CameraEffectControlScript>().EnsureAllEffectsAreDisabled();
 		}
-		else
-		{
-			ghostHearText.text = "HEAR\r\n \r\nALL";
-		}
-	}
 
-	//closes window.
-	public void TeleportScreenClose()//closes screen by close button
-	{
-		teleportButtonList.SetActive(false);
-		TeleportScreenOpen = false;
-		PlacesTeleportScreenOpen = false;
+		public void ToggleAllowCloning()
+		{
+			PlayerManager.LocalPlayerScript.playerNetworkActions.CmdToggleAllowCloning();
+		}
+
+		public void ToggleGhostHearRange()
+		{
+			Chat.Instance.GhostHearAll = !Chat.Instance.GhostHearAll;
+			DetermineGhostHearText();
+		}
+
+		public void NewGhostRoleAvailable(GhostRoleData role)
+		{
+			ghostRoleSpriteHandler.SetSpriteSO(role.Sprite, networked: false);
+			if (roleBtnAnimating) return; // Drop rapid subsequent notifications
+
+			StartCoroutine(GhostRoleNotify(role));
+		}
+
+		private void DetermineGhostHearText()
+		{
+			ghostHearText.text = Chat.Instance.GhostHearAll ? "HEAR\r\n \r\nLOCAL" : "HEAR\r\n \r\nALL";
+		}
+
+		private IEnumerator GhostRoleNotify(GhostRoleData role)
+		{
+			roleBtnAnimating = true;
+
+			Chat.AddExamineMsgToClient($"<size=48>Ghost role <b>{role.Name}</b> is available!</size>");
+			_ = SoundManager.Play(SingletonSOSounds.Instance.Notice2);
+			ghostRoleAnimator.TriggerAnimation();
+
+			yield return WaitFor.Seconds(5);
+			ghostRoleSpriteHandler.ChangeSprite(0, networked: false);
+
+			roleBtnAnimating = false;
+		}
+
+		public void AdminGhostInventoryDrop()
+		{
+			_ = SoundManager.Play(SingletonSOSounds.Instance.Click01);
+			if (PlayerManager.PlayerScript != null)
+			{
+				AdminCommandsManager.Instance.CmdAdminGhostDropItem(ServerData.UserID, PlayerList.Instance.AdminToken);
+			}
+		}
+
+		public void AdminGhostInvSmash()
+		{
+			_ = SoundManager.Play(SingletonSOSounds.Instance.Click01);
+			if (PlayerManager.PlayerScript != null)
+			{
+				AdminCommandsManager.Instance.CmdAdminGhostSmashItem(ServerData.UserID, PlayerList.Instance.AdminToken);
+			}
+		}
 	}
 }

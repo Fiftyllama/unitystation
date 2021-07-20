@@ -1,8 +1,8 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using Mirror;
-using UnityEditor;
 #if UNITY_EDITOR
 using Unity.EditorCoroutines.Editor;
 #endif
@@ -22,7 +22,12 @@ public class SpriteHandler : MonoBehaviour
 	[SerializeField] private SpriteDataSO PresentSpriteSet;
 	private SpriteDataSO.Frame PresentFrame = null;
 
+	[Tooltip("If checked, a random sprite SO will be selected during initialization from the catalogue of sprite SOs.")]
+	[SerializeField] private bool randomInitialSprite = false;
+
 	private SpriteRenderer spriteRenderer;
+
+	public SpriteRenderer SpriteRenderer => spriteRenderer;
 	private Image image;
 
 	private int animationIndex = 0;
@@ -30,7 +35,8 @@ public class SpriteHandler : MonoBehaviour
 	[SerializeField]
 	private bool pushTextureOnStartUp = true;
 
-	[Range(0, 3)] [SerializeField] private int variantIndex = 0;
+	[SerializeField, Range(0, 3)]
+	private int variantIndex = 0;
 
 	private int cataloguePage = -1;
 
@@ -43,18 +49,24 @@ public class SpriteHandler : MonoBehaviour
 
 	private bool isAnimation = false;
 
+	private bool animateOnce;
+
 	private Color? setColour = null;
 
+	[Tooltip("The palette that is applied to the Sprite Renderer, if the Present Sprite Set is paletted.")]
 	[SerializeField] private List<Color> palette = new List<Color>();
+	public List<Color> Palette => palette;
 
-	private bool Initialised;
+	/// <summary>
+	/// false if the palette has not been configured for the current spriteSO. true otherwise
+	/// </summary>
+	private bool isPaletteSet = false;
 
-	private NetworkIdentity NetworkIdentity;
+	private bool initialised = false;
+
+	private NetworkIdentity networkIdentity;
 
 	private bool isSubCatalogueChanged = false;
-
-	[SerializeField]
-	private List<SerialisationStanding> Sprites =new List<SerialisationStanding>();
 
 	/// <summary>
 	/// The catalogue index representing the current sprite SO.
@@ -65,7 +77,18 @@ public class SpriteHandler : MonoBehaviour
 	/// Invokes when sprite just changed by animation or other script
 	/// Null if sprite became hidden
 	/// </summary>
-	public event System.Action<Sprite> OnSpriteChanged;
+	public event Action<Sprite> OnSpriteChanged;
+
+	/// <summary>
+	/// Invokes when sprite data scriptable object is changed
+	/// Null if sprite became hidden
+	/// </summary>
+	public event Action<SpriteDataSO> OnSpriteDataSOChanged;
+
+	/// <summary>
+	/// Invoke when sprite handler has changed color of sprite
+	/// </summary>
+	public event Action<Color> OnColorChanged;
 
 	/// <summary>
 	/// The amount of SubCatalogues defined for this SpriteHandler.
@@ -117,66 +140,99 @@ public class SpriteHandler : MonoBehaviour
 	/// <summary>
 	/// Check if this sprite hander is rendering
 	/// </summary>
-	public bool IsHiden
+	public bool IsHidden
 	{
 		get
 		{
-			return CurrentSprite == null || !gameObject.activeInHierarchy;
+			return CurrentSprite == null || gameObject.activeInHierarchy == false;
 		}
 	}
 
 	public NetworkIdentity GetMasterNetID()
 	{
-		return NetworkIdentity;
+		return networkIdentity;
 	}
 
-	public void ChangeSprite(int SubCataloguePage, bool Network = true)
+	/// <summary>
+	/// Changes the object's active <see cref="SpriteDataSO"></see>.
+	/// </summary>
+	/// <param name="cataloguePage">Index as defined via the inspector on the object.</param>
+	/// <param name="networked">Whether this change should be sent to clients, if server.</param>
+	public void ChangeSprite(int cataloguePage, bool networked = true)
 	{
-		if (SubCataloguePage == cataloguePage) return;
+		InternalChangeSprite(cataloguePage, networked);
+	}
 
-		if (SubCataloguePage >= SubCatalogue.Count)
+	/// <summary>
+	/// When the animation for the given SO is complete,
+	/// the current SO index is incremented (looping to 0 if needed) instead of looping the SO's animation.
+	/// </summary>
+	public void AnimateOnce(int cataloguePage, bool networked = true)
+	{
+		InternalChangeSprite(cataloguePage, networked, true);
+	}
+
+	private void InternalChangeSprite(int cataloguePage, bool networked = true, bool animateOnce = false)
+	{
+		if (animateOnce == false)
 		{
-			Logger.LogError("new SubCataloguePage Is out of bounds on " + this.transform.parent.gameObject);
+			if ((this.cataloguePage > -1 && cataloguePage == this.cataloguePage) || cataloguePage < 0) return;
+		}
+
+		if (cataloguePage >= SubCatalogue.Count)
+		{
+			Logger.LogError($"Sprite catalogue index '{cataloguePage}' is out of bounds on {transform.parent.gameObject}.");
 			return;
 		}
 
-		cataloguePage = SubCataloguePage;
+		this.cataloguePage = cataloguePage;
 		if (isSubCatalogueChanged)
 		{
-			SetSpriteSO(SubCatalogue[SubCataloguePage], Network: true);
+			SetSpriteSO(SubCatalogue[cataloguePage]);
 		}
 		else
 		{
-			SetSpriteSO(SubCatalogue[SubCataloguePage], Network: false);
-			if (Network)
+			SetSpriteSO(SubCatalogue[cataloguePage], networked: false);
+			if (networked)
 			{
-				NetUpdate(NewCataloguePage: SubCataloguePage);
+				NetUpdate(newCataloguePage: cataloguePage, newAnimateOnce: animateOnce);
 			}
 		}
+
+		this.animateOnce = animateOnce;
 	}
 
-
-	public void SetSpriteSO(SpriteDataSO NewspriteDataSO, Color? color = null, int NewvariantIndex = -1,
-		bool Network = true)
+	public void SetSpriteSO(SpriteDataSO newSpriteSO, Color? color = null, int newVariantIndex = -1,
+		bool networked = true)
 	{
-		if (NewspriteDataSO != PresentSpriteSet)
+		if (newSpriteSO == null) return;
+		if (newSpriteSO != PresentSpriteSet)
 		{
-			PresentSpriteSet = NewspriteDataSO;
-			PushTexture(Network);
-			if (Network)
+			isPaletteSet = false;
+			PresentSpriteSet = newSpriteSO;
+			// TODO: Network, change to network catalogue message
+			// See https://github.com/unitystation/unitystation/pull/5675#pullrequestreview-540239428
+			cataloguePage = SubCatalogue.FindIndex(SO => SO == newSpriteSO);
+			PushTexture(networked);
+			if (networked)
 			{
-				NetUpdate(NewspriteDataSO);
+				NetUpdate(newSpriteSO);
 			}
+			OnSpriteDataSOChanged?.Invoke(newSpriteSO);
 		}
 
 		if (color != null)
 		{
-			SetColor(color.GetValueOrDefault(Color.white), Network);
+			SetColor(color.GetValueOrDefault(Color.white), networked);
 		}
 
-		if (NewvariantIndex > -1)
+		if (newSpriteSO.Variance.Count - 1 < variantIndex)
 		{
-			ChangeSpriteVariant(NewvariantIndex, Network);
+			newVariantIndex = 0;
+		}
+		if (newVariantIndex > -1)
+		{
+			ChangeSpriteVariant(newVariantIndex, networked);
 		}
 	}
 
@@ -196,7 +252,7 @@ public class SpriteHandler : MonoBehaviour
 		TryToggleAnimationState(false);
 	}
 
-	public void ChangeSpriteVariant(int spriteVariant, bool NetWork = true)
+	public void ChangeSpriteVariant(int spriteVariant, bool networked = true)
 	{
 		if (PresentSpriteSet != null)
 		{
@@ -209,50 +265,60 @@ public class SpriteHandler : MonoBehaviour
 				}
 
 				variantIndex = spriteVariant;
-
 				var Frame = PresentSpriteSet.Variance[variantIndex].Frames[animationIndex];
 				SetSprite(Frame);
 
 				TryToggleAnimationState(PresentSpriteSet.Variance[variantIndex].Frames.Count > 1);
-				if (NetWork)
+				if (networked)
 				{
-					NetUpdate(NewVariantIndex: spriteVariant);
+					NetUpdate(newVariantIndex: spriteVariant);
 				}
 			}
 		}
 	}
 
-	public void SetColor(Color value, bool NetWork = true)
+	public Color GetColor()
 	{
-		if (setColour == value) return;
+		if (setColour == null)
+		{
+			UpdateImageColor();
+		}
 
+		return setColour.Value;
+	}
+
+	public void SetColor(Color value, bool networked = true)
+	{
+		if (initialised == false) TryInit();
+		if (setColour == value) return;
 		setColour = value;
-		if (!HasImageComponent())
+		if (HasImageComponent() == false)
 		{
 			GetImageComponent();
 		}
 
 		SetImageColor(value);
-		if (NetWork)
+		if (networked)
 		{
-			NetUpdate(NewSetColour: value);
+			NetUpdate(newSetColor: value);
 		}
 	}
 
-	public void ClearPallet(bool Network = true)
+	public void ClearPalette(bool networked = true)
 	{
 		if (palette == null) return;
 		palette = null;
+		isPaletteSet = false;
 
-		if (Network)
+		if (networked)
 		{
-			NetUpdate(NewClearPallet: true);
+			NetUpdate(newClearPalette: true);
 		}
 	}
 
-	public void Empty(bool ClearSubCatalogue = false, bool Network = true)
+	public void Empty(bool clearCatalogue = false, bool networked = true)
 	{
-		if (ClearSubCatalogue)
+		if (clearCatalogue)
 		{
 			SubCatalogue = new List<SpriteDataSO>();
 		}
@@ -261,56 +327,63 @@ public class SpriteHandler : MonoBehaviour
 		cataloguePage = -1;
 		PushClear(false);
 		PresentSpriteSet = null;
+		OnSpriteDataSOChanged?.Invoke(null);
 
-		if (Network)
+		if (networked)
 		{
-			NetUpdate(NewEmpty: true);
+			NetUpdate(newEmpty: true);
 		}
 	}
 
-	public void PushClear(bool Network = true)
+	public void PushClear(bool networked = true)
 	{
-		if (Initialised == false) TryInit();
+		if (initialised == false) TryInit();
 		if (HasSpriteInImageComponent() == false) return;
 
 		SetImageSprite(null);
 		TryToggleAnimationState(false);
-		if (Network)
+		if (networked)
 		{
-			NetUpdate(NewPushClear: true);
+			NetUpdate(newPushClear: true);
 		}
 	}
-
 
 	/// <summary>
 	/// Sets the sprite catalogue for server side only, Any calls to ChangeSprite Will automatically be networked In a different way
 	/// </summary>
-	/// <param name="NewCatalogue"></param>
-	/// <param name="JumpToPage"></param>
-	/// <param name="NetWork"></param>
-	public void SetCatalogue(List<SpriteDataSO> NewCatalogue, int JumpToPage = -1, bool NetWork = true)
+	public void SetCatalogue(List<SpriteDataSO> newCatalogue, int initialPage = -1, bool networked = true)
 	{
 		isSubCatalogueChanged = true;
-		SubCatalogue = NewCatalogue;
-		if (JumpToPage > -1)
+		SubCatalogue = newCatalogue;
+		if (initialPage > -1)
 		{
-			ChangeSprite(JumpToPage, NetWork);
+			ChangeSprite(initialPage, networked);
 		}
 	}
 
-	public void SetPaletteOfCurrentSprite(List<Color> newPalette, bool Network = true)
+	public void SetPaletteOfCurrentSprite(List<Color> newPalette, bool networked = true)
 	{
+		bool paletted = IsPaletted();
+
+		Debug.Assert((paletted && newPalette == null) == false, "Paletted sprites should never have palette set to null");
+
+		if (paletted == false)
+		{
+			newPalette = null;
+		}
+
+		isPaletteSet = false;
 		palette = newPalette;
 		PushTexture(false);
-		if (Network)
+		if (networked)
 		{
-			NetUpdate(NewPalette: palette);
+			NetUpdate(newPalette: palette);
 		}
 	}
 
-	public void PushTexture(bool NetWork = true)
+	public void PushTexture(bool networked = true)
 	{
-		if (Initialised == false) TryInit();
+		if (initialised == false) TryInit();
 		if (PresentSpriteSet != null && PresentSpriteSet.Variance.Count > 0)
 		{
 			if (variantIndex < PresentSpriteSet.Variance.Count)
@@ -325,9 +398,9 @@ public class SpriteHandler : MonoBehaviour
 				SetSprite(Frame);
 
 				TryToggleAnimationState(PresentSpriteSet.Variance[variantIndex].Frames.Count > 1);
-				if (NetWork)
+				if (networked)
 				{
-					NetUpdate(NewPushTexture: true);
+					NetUpdate(newPushTexture: true);
 					//NetWork this a poke Basically
 				}
 
@@ -336,9 +409,9 @@ public class SpriteHandler : MonoBehaviour
 		}
 
 
-		if (NetWork && HasSpriteInImageComponent())
+		if (networked && HasSpriteInImageComponent())
 		{
-			NetUpdate(NewPushTexture: true);
+			NetUpdate(newPushTexture: true);
 		}
 
 		SetImageSprite(null);
@@ -349,45 +422,46 @@ public class SpriteHandler : MonoBehaviour
 	/// Toggles the SpriteRenderer texture. Calls PushTexture() if the new state is on, or PushClear() otherwise.
 	/// </summary>
 	/// <param name="newState">If on, sets the texture (to last known). If off, clears the texture.</param>
-	/// <param name="network">Will send update to clients if true (default).</param>
-	public void ToggleTexture(bool newState, bool network = true)
+	/// <param name="networked">Will send update to clients if true (default).</param>
+	public void ToggleTexture(bool newState, bool networked = true)
 	{
 		if (newState)
 		{
-			PushTexture(network);
+			PushTexture(networked);
 		}
 		else
 		{
-			PushClear(network);
+			PushClear(networked);
 		}
 	}
 
 	private void NetUpdate(
-		SpriteDataSO NewSpriteDataSO = null,
-		int NewVariantIndex = -1,
-		int NewCataloguePage = -1,
-		bool NewPushTexture = false,
-		bool NewEmpty = false,
-		bool NewPushClear = false,
-		bool NewClearPallet = false,
-		Color? NewSetColour = null,
-		List<Color> NewPalette = null)
+		SpriteDataSO newSpriteSO = null,
+		int newVariantIndex = -1,
+		int newCataloguePage = -1,
+		bool newPushTexture = false,
+		bool newEmpty = false,
+		bool newPushClear = false,
+		bool newClearPalette = false,
+		Color? newSetColor = null,
+		List<Color> newPalette = null,
+		bool newAnimateOnce = false)
 	{
 		if (NetworkThis == false) return;
 		if (SpriteHandlerManager.Instance == null) return;
-		if (NetworkIdentity == null)
+		if (networkIdentity == null)
 		{
 			if (this?.gameObject == null) return;
 			var NetID = SpriteHandlerManager.GetRecursivelyANetworkBehaviour(this.gameObject);
 			if (NetID == null)
 			{
 				Logger.LogError("Was unable to find A NetworkBehaviour for ",
-					Category.SpriteHandler);
+					Category.Sprites);
 				return;
-			};
+			}
 
-			NetworkIdentity = NetID.netIdentity;
-			if (NetworkIdentity == null)
+			networkIdentity = NetID;
+			if (networkIdentity == null)
 			{
 				var gamename = "";
 				if (this?.gameObject != null)
@@ -395,7 +469,7 @@ public class SpriteHandler : MonoBehaviour
 					gamename = gameObject.name;
 				}
 				Logger.LogError("Was unable to find A NetworkBehaviour for " + gamename,
-					Category.SpriteHandler);
+					Category.Sprites);
 			}
 		}
 
@@ -412,62 +486,68 @@ public class SpriteHandler : MonoBehaviour
 			spriteChange = SpriteHandlerManager.GetSpriteChange();
 		}
 
-		if (NewSpriteDataSO != null)
+		if (newSpriteSO != null)
 		{
-			if (NewSpriteDataSO.setID == -1)
+			if (newSpriteSO.setID == -1)
 			{
-				Logger.Log("NewSpriteDataSO NO ID!" + NewSpriteDataSO.name);
+				Logger.Log("NewSpriteDataSO NO ID!" + newSpriteSO.name, Category.Sprites);
 			}
 			if (spriteChange.Empty) spriteChange.Empty = false;
-			spriteChange.PresentSpriteSet = NewSpriteDataSO.setID;
+			spriteChange.PresentSpriteSet = newSpriteSO.setID;
 		}
 
-		if (NewVariantIndex != -1)
+		if (newVariantIndex != -1)
 		{
-			spriteChange.VariantIndex = NewVariantIndex;
+			spriteChange.VariantIndex = newVariantIndex;
 		}
 
-		if (NewCataloguePage != -1)
+		if (newCataloguePage != -1)
 		{
-			spriteChange.CataloguePage = NewCataloguePage;
+			spriteChange.CataloguePage = newCataloguePage;
 		}
 
-		if (NewPushTexture)
+		if (newPushTexture)
 		{
 			if (spriteChange.PushClear) spriteChange.PushClear = false;
-			spriteChange.PushTexture = NewPushTexture;
+			spriteChange.PushTexture = newPushTexture;
 		}
 
-		if (NewEmpty)
+		if (newEmpty)
 		{
 			if (spriteChange.PresentSpriteSet != -1) spriteChange.PresentSpriteSet = -1;
-			spriteChange.Empty = NewEmpty;
+			spriteChange.Empty = newEmpty;
 		}
 
-		if (NewPushClear)
+		if (newPushClear)
 		{
 			if (spriteChange.PushTexture) spriteChange.PushTexture = false;
-			spriteChange.PushClear = NewPushClear;
+			spriteChange.PushClear = newPushClear;
 		}
 
-		if (NewClearPallet)
+		if (newAnimateOnce)
 		{
-			if (spriteChange.Pallet != null) spriteChange.Pallet = null;
-			spriteChange.ClearPallet = NewClearPallet;
+			if (spriteChange.AnimateOnce) spriteChange.AnimateOnce = false;
+			spriteChange.AnimateOnce = newAnimateOnce;
 		}
 
-		if (NewSetColour != null)
+		if (newClearPalette)
 		{
-			spriteChange.SetColour = NewSetColour;
+			if (spriteChange.Palette != null) spriteChange.Palette = null;
+			spriteChange.ClearPalette = newClearPalette;
 		}
 
-		if (NewPalette != null)
+		if (newSetColor != null)
 		{
-			if (spriteChange.ClearPallet) spriteChange.ClearPallet = false;
-			spriteChange.Pallet = NewPalette;
+			spriteChange.SetColour = newSetColor;
 		}
 
-		if (NetworkIdentity.netId == 0)
+		if (newPalette != null)
+		{
+			if (spriteChange.ClearPalette) spriteChange.ClearPalette = false;
+			spriteChange.Palette = newPalette;
+		}
+
+		if (networkIdentity.netId == 0)
 		{
 			//Logger.Log("ID hasn't been set for " + this.transform.parent);
 			StartCoroutine(WaitForNetInitialisation(spriteChange));
@@ -482,9 +562,9 @@ public class SpriteHandler : MonoBehaviour
 	private IEnumerator WaitForNetInitialisation(SpriteHandlerManager.SpriteChange spriteChange)
 	{
 		yield return null;
-		if (NetworkIdentity.netId == 0)
+		if (networkIdentity.netId == 0)
 		{
-			Logger.LogError("ID hasn't been set for " + this.transform.parent);
+			Logger.LogError($"ID hasn't been set for ${this.transform.parent}.", Category.Sprites);
 			yield break;
 		}
 
@@ -508,6 +588,15 @@ public class SpriteHandler : MonoBehaviour
 		TryInit();
 	}
 
+	private void OnDestroy()
+	{
+		if (SpriteHandlerManager.Instance)
+		{
+			SpriteHandlerManager.Instance.QueueChanges.Remove(this);
+			SpriteHandlerManager.Instance.NewClientChanges.Remove(this);
+		}
+	}
+
 	private void SetImageColor(Color value)
 	{
 		if (spriteRenderer != null)
@@ -518,6 +607,60 @@ public class SpriteHandler : MonoBehaviour
 		{
 			image.color = value;
 		}
+
+		OnColorChanged?.Invoke(value);
+	}
+
+	private void UpdateImageColor()
+	{
+		if (spriteRenderer != null)
+		{
+			setColour = spriteRenderer.color;
+		}
+		else if (image != null)
+		{
+			setColour = image.color;
+		}
+	}
+
+	private void SetPaletteOnSpriteRenderer()
+	{
+		isPaletteSet = true;
+		var palette = GetPaletteOrNull();
+		if (palette != null && palette.Count > 0 && palette.Count <= 256)
+		{
+			MaterialPropertyBlock block = new MaterialPropertyBlock();
+			spriteRenderer.GetPropertyBlock(block);
+			List<Vector4> pal = palette.ConvertAll<Vector4>((Color c) => new Vector4(c.r, c.g, c.b, c.a));
+			block.SetVectorArray("_ColorPalette", pal);
+			block.SetInt("_IsPaletted", 1);
+			block.SetInt("_PaletteSize", pal.Count);
+			spriteRenderer.SetPropertyBlock(block);
+		}
+		else
+		{
+			MaterialPropertyBlock block = new MaterialPropertyBlock();
+			spriteRenderer.GetPropertyBlock(block);
+			block.SetInt("_IsPaletted", 0);
+			spriteRenderer.SetPropertyBlock(block);
+		}
+	}
+
+	private void SetPaletteOnImage()
+	{
+		List<Color> paletteOrNull = GetPaletteOrNull();
+
+		if (paletteOrNull != null && palette.Count > 0 && palette.Count <= 256)
+		{
+			List<Vector4> pal = paletteOrNull.ConvertAll((c) => new Vector4(c.r, c.g, c.b, c.a));
+			image.material.SetVectorArray("_ColorPalette", pal);
+			image.material.SetInt("_IsPaletted", 1);
+			image.material.SetInt("_PaletteSize", pal.Count);
+		}
+		else
+		{
+			image.material.SetInt("_IsPaletted", 0);
+		}
 	}
 
 	private void SetImageSprite(Sprite value)
@@ -526,25 +669,21 @@ public class SpriteHandler : MonoBehaviour
 		{
 			spriteRenderer.enabled = true;
 			spriteRenderer.sprite = value;
-			MaterialPropertyBlock block = new MaterialPropertyBlock();
-			spriteRenderer.GetPropertyBlock(block);
-			var palette = getPaletteOrNull();
-			if (palette != null && palette.Count == 8)
-			{
-				List<Vector4> pal = palette.ConvertAll<Vector4>((Color c) => new Vector4(c.r, c.g, c.b, c.a));
-				block.SetVectorArray("_ColorPalette", pal);
-				block.SetInt("_IsPaletted", 1);
-			}
-			else
-			{
-				block.SetInt("_IsPaletted", 0);
-			}
 
-			spriteRenderer.SetPropertyBlock(block);
+			if (isPaletteSet == false)
+			{
+				SetPaletteOnSpriteRenderer();
+			}
 		}
 		else if (image != null)
 		{
 			image.sprite = value;
+
+			if (isPaletteSet == false)
+			{
+				SetPaletteOnImage();
+			}
+
 			if (value == null)
 			{
 				image.enabled = false;
@@ -565,9 +704,9 @@ public class SpriteHandler : MonoBehaviour
 		return (false);
 	}
 
-	private bool HasSpriteInImageComponent()
+	public bool HasSpriteInImageComponent()
 	{
-		if (Initialised == false) TryInit();
+		if (initialised == false) TryInit();
 		if (spriteRenderer != null)
 		{
 			if (spriteRenderer.sprite != null)
@@ -578,7 +717,7 @@ public class SpriteHandler : MonoBehaviour
 
 		if (image != null)
 		{
-			if (image.sprite != null)
+			if (image.sprite != null || image.enabled)
 			{
 				return true;
 			}
@@ -591,15 +730,25 @@ public class SpriteHandler : MonoBehaviour
 	{
 		spriteRenderer = GetComponent<SpriteRenderer>();
 		image = GetComponent<Image>();
+		if (image != null)
+		{
+			// unity doesn't support property blocks on ui renderers, so this is a workaround
+			image.material = Instantiate(image.material);
+		}
 	}
 
 	private void TryInit()
 	{
 		GetImageComponent();
+		bool Status = this.GetImageComponentStatus();
 		ImageComponentStatus(false);
-		Initialised = true;
+		initialised = true;
 
-		if (PresentSpriteSet != null)
+		if (randomInitialSprite && CatalogueCount > 0)
+		{
+			ChangeSprite(UnityEngine.Random.Range(0, CatalogueCount), NetworkThis);
+		}
+		else if (PresentSpriteSet != null)
 		{
 			if (HasImageComponent() && pushTextureOnStartUp)
 			{
@@ -607,31 +756,47 @@ public class SpriteHandler : MonoBehaviour
 			}
 		}
 
-		ImageComponentStatus(true);
+		ImageComponentStatus(Status);
 	}
 
-	private void ImageComponentStatus(bool Status)
+	private void ImageComponentStatus(bool newStatus)
 	{
 		if (spriteRenderer != null)
 		{
-			spriteRenderer.enabled = Status;
+			spriteRenderer.enabled = newStatus;
 		}
 		else if (image != null)
 		{
-			image.enabled = Status;
+			image.enabled = newStatus;
 		}
+	}
+
+	private bool GetImageComponentStatus()
+	{
+		if (spriteRenderer != null)
+		{
+			return spriteRenderer.enabled;
+		}
+		else if (image != null)
+		{
+			return image.enabled;
+		}
+
+		return false;
 	}
 
 	private void OnEnable()
 	{
 		if (Application.isPlaying && NetworkThis)
 		{
-			NetworkIdentity = SpriteHandlerManager.GetRecursivelyANetworkBehaviour(this.gameObject)?.netIdentity;
-			SpriteHandlerManager.RegisterHandler(this.NetworkIdentity, this);
+			networkIdentity = SpriteHandlerManager.GetRecursivelyANetworkBehaviour(this.gameObject);
+			SpriteHandlerManager.RegisterHandler(this.networkIdentity, this);
 		}
 
 		GetImageComponent();
 		OnSpriteChanged?.Invoke(CurrentSprite);
+
+		PushTexture(false); // TODO: animations don't resume when sprite object is disabled and re-enabled, this is a workaround
 	}
 
 	private void OnDisable()
@@ -640,16 +805,19 @@ public class SpriteHandler : MonoBehaviour
 		OnSpriteChanged?.Invoke(null);
 	}
 
-	private bool isPaletted()
+	private bool IsPaletted()
 	{
-		if (PresentSpriteSet == null) return false;
+		if (PresentSpriteSet == null)
+		{
+			return false;
+		}
 
 		return PresentSpriteSet.IsPalette;
 	}
 
-	private List<Color> getPaletteOrNull()
+	private List<Color> GetPaletteOrNull()
 	{
-		if (!isPaletted())
+		if (IsPaletted() == false)
 			return null;
 
 		return palette;
@@ -657,31 +825,38 @@ public class SpriteHandler : MonoBehaviour
 
 	public void UpdateMe()
 	{
-		timeElapsed += Time.deltaTime;
-		if (PresentSpriteSet.Variance.Count > variantIndex &&
-		    timeElapsed >= PresentFrame.secondDelay)
+		timeElapsed += UpdateManager.CashedDeltaTime;
+		if (timeElapsed >= PresentFrame.secondDelay)
 		{
-			animationIndex++;
-			if (animationIndex >= PresentSpriteSet.Variance[variantIndex].Frames.Count)
+			if (variantIndex < PresentSpriteSet.Variance.Count)
 			{
-				animationIndex = 0;
+				animationIndex++;
+				if (animationIndex >= PresentSpriteSet.Variance[variantIndex].Frames.Count)
+				{
+					animationIndex = 0;
+					if (animateOnce)
+					{
+						InternalChangeSprite(CataloguePage + 1 < SubCatalogue.Count ? CataloguePage + 1 : 0, false);
+						return;
+					}
+				}
+				var frame = PresentSpriteSet.Variance[variantIndex].Frames[animationIndex];
+				SetSprite(frame);
 			}
 
-			var frame = PresentSpriteSet.Variance[variantIndex].Frames[animationIndex];
-			SetSprite(frame);
 		}
 
-		if (!isAnimation)
+		if (isAnimation == false)
 		{
 			UpdateManager.Remove(CallbackType.UPDATE, UpdateMe);
 		}
 	}
 
-	private void SetSprite(SpriteDataSO.Frame Frame)
+	private void SetSprite(SpriteDataSO.Frame frame)
 	{
 		timeElapsed = 0;
-		PresentFrame = Frame;
-		SetImageSprite(Frame.sprite);
+		PresentFrame = frame;
+		SetImageSprite(frame.sprite);
 	}
 
 	/// <summary>
@@ -710,10 +885,10 @@ public class SpriteHandler : MonoBehaviour
 	{
 		yield return new Unity.EditorCoroutines.Editor.EditorWaitForSeconds(PresentFrame.secondDelay);
 		UpdateMe();
-		EditorAnimating = null;
+		editorAnimating = null;
 		if (isAnimation && !(this == null))
 		{
-			EditorAnimating =
+			editorAnimating =
 				Unity.EditorCoroutines.Editor.EditorCoroutineUtility.StartCoroutine(EditorAnimations(), this);
 		}
 	}
@@ -729,12 +904,12 @@ public class SpriteHandler : MonoBehaviour
 		}
 #endif
 
-		if (turnOn && !isAnimation)
+		if (turnOn && isAnimation == false)
 		{
 			UpdateManager.Add(CallbackType.UPDATE, UpdateMe);
 			isAnimation = true;
 		}
-		else if (!turnOn && isAnimation)
+		else if (turnOn == false && isAnimation)
 		{
 			UpdateManager.Remove(CallbackType.UPDATE, UpdateMe);
 			animationIndex = 0;
@@ -743,7 +918,7 @@ public class SpriteHandler : MonoBehaviour
 	}
 
 #if UNITY_EDITOR
-	private EditorCoroutine EditorAnimating;
+	private EditorCoroutine editorAnimating;
 
 	private void OnValidate()
 	{
@@ -755,9 +930,9 @@ public class SpriteHandler : MonoBehaviour
 			return;
 		}
 		if (this.gameObject.scene.path != null && this.gameObject.scene.path.Contains("Scenes") == false &&
-		    EditorAnimating == null)
+		    editorAnimating == null)
 		{
-			Initialised = true;
+			initialised = true;
 			GetImageComponent();
 			PushTexture();
 		}
@@ -766,12 +941,12 @@ public class SpriteHandler : MonoBehaviour
 
 	private bool EditorTryToggleAnimationState(bool turnOn)
 	{
-		if (Application.isEditor && !Application.isPlaying)
+		if (Application.isEditor && Application.isPlaying == false)
 		{
-			if (turnOn && !isAnimation)
+			if (turnOn && isAnimation == false)
 			{
 				if (this.gameObject.scene.path != null && this.gameObject.scene.path.Contains("Scenes") == false &&
-				    EditorAnimating == null)
+				    editorAnimating == null)
 				{
 					Unity.EditorCoroutines.Editor.EditorCoroutineUtility.StartCoroutine(EditorAnimations(), this);
 					isAnimation = true;
@@ -781,7 +956,7 @@ public class SpriteHandler : MonoBehaviour
 					return true;
 				}
 			}
-			else if (!turnOn && isAnimation)
+			else if (turnOn == false && isAnimation)
 			{
 				isAnimation = false;
 			}
@@ -792,7 +967,7 @@ public class SpriteHandler : MonoBehaviour
 		return false;
 	}
 #endif
-	[System.Serializable]
+	[Serializable]
 	public class SerialisationStanding
 	{
 		public Texture2D Texture;

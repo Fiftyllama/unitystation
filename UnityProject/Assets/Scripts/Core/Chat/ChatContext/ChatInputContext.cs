@@ -19,6 +19,18 @@ public class ChatInputContext : IChatInputContext
 				return ChatChannel.None;
 			}
 
+			// Player is Ai?
+			if (PlayerManager.LocalPlayerScript.PlayerState == PlayerScript.PlayerStates.Ai)
+			{
+				return ChatChannel.Binary;
+			}
+
+			// Player is blob?
+			if (PlayerManager.LocalPlayerScript.PlayerState == PlayerScript.PlayerStates.Blob)
+			{
+				return ChatChannel.Blob;
+			}
+
 			// Player is some spooky ghost?
 			if (PlayerManager.LocalPlayerScript.IsDeadOrGhost)
 			{
@@ -36,7 +48,7 @@ public class ChatInputContext : IChatInputContext
 			var key = playerHeadset.EncryptionKey;
 			if (!EncryptionKey.DefaultChannel.ContainsKey(key))
 			{
-				Logger.LogError($"Can't find default channel for a {key}");
+				Logger.LogError($"Can't find default channel for a {key}", Category.Chat);
 				return ChatChannel.None;
 			}
 
@@ -52,7 +64,7 @@ public class ChatInputContext : IChatInputContext
 		// Player doesn't have any storage? That's bad
 		if (!playerStorage)
 		{
-			Debug.LogError("Can't find current headset, becouse local player storage doesn't exist");
+			Logger.LogError("Can't find current headset, because local player storage doesn't exist", Category.PlayerInventory);
 			return null;
 		}
 

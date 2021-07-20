@@ -12,11 +12,11 @@ namespace Weapons.Projectiles.Behaviours
 		[Tooltip("Spawn object on collision?")]
 		[SerializeField] private bool isTriggeredOnHit = true;
 
-		public void OnDespawn(RaycastHit2D hit, Vector2 point)
+		public void OnDespawn(MatrixManager.CustomPhysicsHit hit, Vector2 point)
 		{
-			if (isTriggeredOnHit && hit.collider != null)
+			if (isTriggeredOnHit && hit.ItHit)
 			{
-				OnBeamEnd(hit.point);
+				OnBeamEnd(hit.HitWorld);
 			}
 			else
 			{
@@ -27,7 +27,7 @@ namespace Weapons.Projectiles.Behaviours
 		private void OnBeamEnd(Vector2 position)
         {
             Quaternion? rot = Quaternion.Euler(0.0f, 0.0f, Random.Range(0, 360f));
-            var newObject = Spawn.ServerPrefab(droppedObject.name,
+            var newObject = Spawn.ServerPrefab(droppedObject,
             position, localRotation: rot );
         }
 	}

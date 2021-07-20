@@ -2,6 +2,8 @@
 using System.Collections.Generic;
 using System.Linq;
 using DatabaseAPI;
+using Items;
+using Messages.Client.DevSpawner;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -38,6 +40,7 @@ public class GUI_DevCloner : MonoBehaviour
 	private EscapeKeyTarget escapeKeyTarget;
 
 	private LightingSystem lightingSystem;
+	private bool cachedLightingState;
 
 	void Awake()
 	{
@@ -47,6 +50,35 @@ public class GUI_DevCloner : MonoBehaviour
 		escapeKeyTarget = GetComponent<EscapeKeyTarget>();
 		lightingSystem = Camera.main.GetComponent<LightingSystem>();
 		ToState(State.SELECTING);
+	}
+
+	private void CheckAndApplyPalette(ref SpriteRenderer renderer)
+	{
+		bool isPaletted = false;
+
+		if (toClone.TryGetComponent(out ItemAttributesV2 prefabAttributes))
+		{
+			ItemsSprites sprites = prefabAttributes.ItemSprites;
+			if (sprites.IsPaletted)
+			{
+				List<Color> palette = sprites.Palette;
+				Debug.Assert(palette != null, "Palette must not be null on paletteable objects.");
+				MaterialPropertyBlock block = new MaterialPropertyBlock();
+				renderer.GetPropertyBlock(block);
+				List<Vector4> pal = palette.ConvertAll((c) => new Vector4(c.r, c.g, c.b, c.a));
+				block.SetVectorArray("_ColorPalette", pal);
+				block.SetInt("_PaletteSize", pal.Count);
+				block.SetInt("_IsPaletted", 1);
+				renderer.SetPropertyBlock(block);
+
+				isPaletted = true;
+			}
+		}
+
+		if (!isPaletted)
+		{
+			renderer.material.SetInt("_IsPaletted", 0);
+		}
 	}
 
 	private void ToState(State newState)
@@ -65,6 +97,7 @@ public class GUI_DevCloner : MonoBehaviour
 		{
 			statusText.text = "Click to select object to clone (ESC to Cancel)";
 			UIManager.IsMouseInteractionDisabled = true;
+			cachedLightingState = lightingSystem.enabled;
 			lightingSystem.enabled = false;
 
 		}
@@ -74,14 +107,17 @@ public class GUI_DevCloner : MonoBehaviour
 			UIManager.IsMouseInteractionDisabled = true;
 			//just chosen to be spawned on the map. Put our object under the mouse cursor
 			cursorObject = Instantiate(cursorPrefab, transform.root);
-			cursorObject.GetComponent<SpriteRenderer>().sprite = toClone.GetComponentInChildren<SpriteRenderer>().sprite;
+			SpriteRenderer cursorRenderer = cursorObject.GetComponent<SpriteRenderer>();
+			cursorRenderer.sprite = toClone.GetComponentInChildren<SpriteRenderer>().sprite;
+			CheckAndApplyPalette(ref cursorRenderer);
+			cachedLightingState = lightingSystem.enabled;
 			lightingSystem.enabled = false;
 		}
 		else if (newState == State.INACTIVE)
 		{
 			statusText.text = "Click to select object to clone (ESC to Cancel)";
 			UIManager.IsMouseInteractionDisabled = false;
-			lightingSystem.enabled = true;
+			lightingSystem.enabled = cachedLightingState;
 			gameObject.SetActive(false);
 		}
 
@@ -138,7 +174,7 @@ public class GUI_DevCloner : MonoBehaviour
 						                        " did not match one of our existing prefabs " +
 						                        "therefore cannot be cloned (because we wouldn't know which prefab to instantiate). " +
 						                        "Please attach this component to the object and specify the prefab" +
-						                        " to allow it to be cloned.", Category.ItemSpawn, nonPooled.name);
+						                        " to allow it to be cloned.", Category.Admin, nonPooled.name);
 					}
 				}
 
@@ -154,12 +190,11 @@ public class GUI_DevCloner : MonoBehaviour
 		}
 		else if (state == State.DRAWING)
 		{
-			cursorObject.transform.position = Camera.main.ScreenToWorldPoint(CommonInput.mousePosition);
+			cursorObject.transform.position = MouseUtils.MouseToWorldPos();
 			if (CommonInput.GetMouseButtonDown(0))
 			{
 				Vector3Int position = cursorObject.transform.position.RoundToInt();
-				position.z = 0;
-				if (MatrixManager.IsPassableAt(position, false))
+				if (MatrixManager.IsPassableAtAllMatricesOneTile(position, false))
 				{
 					if (CustomNetworkManager.IsServer)
 					{

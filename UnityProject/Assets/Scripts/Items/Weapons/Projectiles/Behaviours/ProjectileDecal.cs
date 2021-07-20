@@ -9,16 +9,16 @@ namespace Weapons.Projectiles.Behaviours
 		[Tooltip("Living time of decal.")]
 		[SerializeField] private float animationTime = 0;
 
-		public bool OnHit(RaycastHit2D hit)
+		public bool OnHit(MatrixManager.CustomPhysicsHit hit)
 		{
 			if (decal == null)
 			{
-				Logger.LogError($"{this} on {gameObject} decal field not set in inspector!");
+				Logger.LogError($"{this} on {gameObject} decal field not set in inspector!", Category.Firearms);
 				return false;
 			}
 
 			var newDecal = Spawn.ClientPrefab(decal.name,
-				hit.point).GameObject;
+				hit.HitWorld).GameObject;
 			var timeLimitedDecal = newDecal.GetComponent<TimeLimitedDecal>();
 			timeLimitedDecal.SetUpDecal(animationTime);
 			return false;

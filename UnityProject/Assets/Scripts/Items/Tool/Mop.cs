@@ -38,7 +38,7 @@ public class Mop : MonoBehaviour, ICheckedInteractable<PositionalHandApply>, IEx
 		if (!Validations.HasComponent<InteractableTiles>(interaction.TargetObject)) return false;
 
 		//don't attempt to mop walls
-		if (MatrixManager.IsWallAt(interaction.WorldPositionTarget.RoundToInt(), isServer: side == NetworkSide.Server))
+		if (MatrixManager.IsWallAtAnyMatrix(interaction.WorldPositionTarget.RoundToInt(), isServer: side == NetworkSide.Server))
 		{
 			return false;
 		}
@@ -57,7 +57,27 @@ public class Mop : MonoBehaviour, ICheckedInteractable<PositionalHandApply>, IEx
 		//do the mopping
 		void CompleteProgress()
 		{
-			CleanTile(interaction.WorldPositionTarget);
+			Vector3Int worldPos = interaction.WorldPositionTarget.RoundToInt();
+			MatrixInfo matrixInfo = MatrixManager.AtPoint(worldPos, true);
+			Vector3Int localPos = MatrixManager.WorldToLocalInt(worldPos, matrixInfo);
+			if (reagentContainer)
+			{
+				if (reagentContainer.MajorMixReagent.name == "Water")
+				{
+					matrixInfo.MetaDataLayer.Clean(worldPos, localPos, true);
+					reagentContainer.TakeReagents(reagentsPerUse);
+				}
+				else if (reagentContainer.MajorMixReagent.name == "SpaceCleaner")
+				{
+					matrixInfo.MetaDataLayer.Clean(worldPos, localPos, false);
+					reagentContainer.TakeReagents(reagentsPerUse);
+				}
+				else
+				{
+					MatrixManager.ReagentReact(reagentContainer.TakeReagents(reagentsPerUse), worldPos);
+				}
+			}
+			
 			Chat.AddExamineMsg(interaction.Performer, "You finish mopping.");
 		}
 
@@ -68,16 +88,11 @@ public class Mop : MonoBehaviour, ICheckedInteractable<PositionalHandApply>, IEx
 		if (bar)
 		{
 			Chat.AddActionMsgToChat(interaction.Performer,
-				$"You begin to clean the floor with {gameObject.ExpensiveName()}...",
-				$"{interaction.Performer.name} begins to clean the floor with {gameObject.ExpensiveName()}.");
+				$"You begin to clean the floor with the {gameObject.ExpensiveName()}...",
+				$"{interaction.Performer.name} begins to clean the floor with the {gameObject.ExpensiveName()}.");
 		}
 	}
-
-	public void CleanTile(Vector3 worldPos)
-	{
-		MatrixManager.ReagentReact(reagentContainer.TakeReagents(reagentsPerUse), worldPos.CutToInt());
-	}
-
+	
 	public string Examine(Vector3 worldPos = default)
 	{
 		string msg = null;

@@ -38,6 +38,11 @@ namespace AdminTools
 		private List<AdminPlayerEntry> playerEntries = new List<AdminPlayerEntry>();
 		public string SelectedPlayer { get; private set; }
 
+		public List<AdminPlayerEntry> GetPlayerEntries()
+		{
+			return playerEntries;
+		}
+
 		private void OnEnable()
 		{
 			playerChatPageScript = playerChatPage.GetComponent<PlayerChatPage>();
@@ -134,7 +139,7 @@ namespace AdminTools
 			windowTitle.text = "DEV TOOLS";
 			AdminCommandsManager.Instance.CmdRequestProfiles(ServerData.UserID, PlayerList.Instance.AdminToken);
 		}
-		
+
 		public void ShowRespawnPage()
 		{
 			DisableAllPages();

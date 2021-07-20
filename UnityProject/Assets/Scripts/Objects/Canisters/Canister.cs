@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using Mirror;
 using Pipes;
+using Systems.Atmospherics;
 
 namespace Objects.Atmospherics
 {
@@ -38,6 +39,7 @@ namespace Objects.Atmospherics
 		[SerializeField] private SpriteHandler pressureIndicatorOverlay = default;
 		[SerializeField] private SpriteHandler connectorHoseOverlay = default;
 		[SerializeField] private SpriteHandler tankInsertedOverlay = default;
+		[SerializeField] private SpriteHandler openValveOverlay = default;
 
 		// Components attached to GameObject.
 		public GasContainer GasContainer { get; private set; }
@@ -49,6 +51,7 @@ namespace Objects.Atmospherics
 		private ShuttleFuelConnector connectorFuel;
 
 		public bool ValveIsOpen { get; private set; }
+		public bool tankValveOpen;
 		public GameObject InsertedContainer { get; private set; }
 		public bool HasContainerInserted => InsertedContainer != null;
 		public bool IsConnected => connector != null || connectorFuel != null;
@@ -77,8 +80,11 @@ namespace Objects.Atmospherics
 		{
 			RedFlashing = 0,
 			Red = 1,
-			Yellow = 2,
-			Green = 3
+			Orange = 2,
+			OrangeYellow = 3,
+			Yellow = 4,
+			YellowGreen = 5,
+			Green = 6
 		}
 
 		#region Lifecycle
@@ -129,13 +135,14 @@ namespace Objects.Atmospherics
 			pressureIndicatorOverlay.PushClear();
 			connectorHoseOverlay.PushClear();
 			tankInsertedOverlay.PushClear();
+			openValveOverlay.PushClear();
 
 			hasBurst = true;
 		}
 
 		private void OnDisable()
 		{
-			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, RefreshPressureIndicator);
+			UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateMe);
 		}
 
 		//this is just here so anyone trying to change the armor value in inspector sees it being
@@ -167,7 +174,7 @@ namespace Objects.Atmospherics
 		{
 			if (newState)
 			{
-				registerObject.Passable = true;
+				registerObject.SetPassable(false, true);
 				// After the canister bursts, we switch appropriate scripts.
 				GetComponent<BurstCanister>().enabled = true;
 				networkTab.enabled = false;
@@ -186,20 +193,14 @@ namespace Objects.Atmospherics
 		public void SetValve(bool isOpen)
 		{
 			ValveIsOpen = isOpen;
-			if (!IsConnected)
-			{
-				GasContainer.SetVent(isOpen);
-			}
-
 			RefreshOverlays();
-
 			if (isOpen)
 			{
-				UpdateManager.Add(RefreshPressureIndicator, 1);
+				UpdateManager.Add(UpdateMe, 1);
 			}
 			else
 			{
-				UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, RefreshPressureIndicator);
+				UpdateManager.Remove(CallbackType.PERIODIC_UPDATE, UpdateMe);
 			}
 		}
 
@@ -229,7 +230,7 @@ namespace Objects.Atmospherics
 			EjectInsertedContainer();
 
 			var playerScript = networkTab.LastInteractedPlayer().GetComponent<PlayerScript>();
-			var bestHand = playerScript.ItemStorage.GetBestHand();
+			var bestHand = playerScript.DynamicItemStorage.GetBestHand();
 			if (bestHand != null)
 			{
 				Inventory.ServerAdd(gasContainer, bestHand);
@@ -339,7 +340,8 @@ namespace Objects.Atmospherics
 				Logger.LogError(
 						$"{interaction.Performer} tried inserting {interaction.UsedObject} into {gameObject}, " +
 						$"but the tank didn't have a {nameof(GasContainer)} component associated with it. " +
-						$"Something terrible has happened, or an item that should not has the CanisterFillable ItemTrait."
+						$"Something terrible has happened, or an item that should not has the CanisterFillable ItemTrait.",
+						Category.Atmos
 				);
 			}
 		}
@@ -350,13 +352,6 @@ namespace Objects.Atmospherics
 			RefreshOverlays();
 			objectBehaviour.ServerSetPushable(!IsConnected);
 			ServerOnConnectionStatusChange.Invoke(IsConnected);
-
-			// Will release gas if canister valve was not turned off before disconnecting from a connector,
-			// or stop the release of gas if canister valve is open and is now connected.
-			if (ValveIsOpen)
-			{
-				GasContainer.SetVent(!IsConnected);
-			}
 		}
 
 		#endregion Interaction
@@ -365,21 +360,55 @@ namespace Objects.Atmospherics
 		{
 			if (canisterTier > 0)
 			{
-				GasContainer.GasMix *= Mathf.Pow(10, canisterTier);
+				GasContainer.GasMix.MultiplyGas(Mathf.Pow(10, canisterTier));
 				canisterTierOverlay.ChangeSprite(canisterTier - 1); // Tier 0 has no overlay.
 			}
+		}
+
+		public void UpdateMe()
+		{
+			if(!IsConnected)
+				GasContainer.VentContents();
+			if (tankValveOpen)
+				MergeCanisterAndTank();
+			RefreshPressureIndicator();
+		}
+
+		public void MergeCanisterAndTank()
+		{
+			//Check for inserted tank
+			if(HasContainerInserted == false) return;
+
+			GasContainer canisterTank = GetComponent<GasContainer>();
+			GasContainer externalTank = InsertedContainer.GetComponent<GasContainer>();
+			GasMix canisterGas = canisterTank.GasMix;
+			GasMix tankGas = externalTank.GasMix;
+			canisterTank.GasMix = tankGas.MergeGasMix(canisterGas);
+			externalTank.GasMix = tankGas;
 		}
 
 		public void RefreshPressureIndicator()
 		{
 			var pressure = GasContainer.ServerInternalPressure;
-			if (pressure >= 40 * ONE_ATMOSPHERE)
+			if (pressure >= 9100)
 			{
 				pressureIndicatorOverlay.ChangeSprite((int)PressureIndicatorState.Green);
 			}
-			else if (pressure >= 10 * ONE_ATMOSPHERE)
+			else if (pressure >= 40 * ONE_ATMOSPHERE)
+			{
+				pressureIndicatorOverlay.ChangeSprite((int)PressureIndicatorState.YellowGreen);
+			}
+			else if (pressure >= 30 * ONE_ATMOSPHERE)
 			{
 				pressureIndicatorOverlay.ChangeSprite((int)PressureIndicatorState.Yellow);
+			}
+			else if (pressure >= 20 * ONE_ATMOSPHERE)
+			{
+				pressureIndicatorOverlay.ChangeSprite((int)PressureIndicatorState.OrangeYellow);
+			}
+			else if (pressure >= 10 * ONE_ATMOSPHERE)
+			{
+				pressureIndicatorOverlay.ChangeSprite((int)PressureIndicatorState.Orange);
 			}
 			else if (pressure >= 5 * ONE_ATMOSPHERE)
 			{
@@ -403,9 +432,11 @@ namespace Objects.Atmospherics
 			// If present SO is set in editor, then the overlays show in editor.
 			connectorHoseOverlay.ChangeSprite(0);
 			tankInsertedOverlay.ChangeSprite(0);
+			openValveOverlay.ChangeSprite(0);
 
 			connectorHoseOverlay.ToggleTexture(IsConnected);
 			tankInsertedOverlay.ToggleTexture(HasContainerInserted);
+			openValveOverlay.ToggleTexture(ValveIsOpen);
 		}
 	}
 }

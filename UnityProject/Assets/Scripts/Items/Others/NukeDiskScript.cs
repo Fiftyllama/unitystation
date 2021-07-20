@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using Systems.Atmospherics;
+using HealthV2;
 using UnityEngine;
 using Mirror;
 using Random = UnityEngine.Random;
@@ -83,7 +84,7 @@ namespace Items.Command
 		protected virtual void ServerPeriodicUpdate()
 		{
 			if (!boundsConfigured) return;
-			if (!stopAutoTeleport) return;
+			if (stopAutoTeleport) return;
 
 			if (DiskLost())
 			{
@@ -98,7 +99,8 @@ namespace Items.Command
 
 			if (escapeShuttle != null && escapeShuttle.Status != EscapeShuttleStatus.DockedCentcom)
 			{
-				if (escapeShuttle.MatrixInfo.Bounds.Contains(registerItem.WorldPositionServer))
+				var matrixInfo = escapeShuttle.MatrixInfo;
+				if (matrixInfo == null || matrixInfo.Bounds.Contains(registerItem.WorldPositionServer))
 				{
 					return false;
 				}
@@ -110,21 +112,25 @@ namespace Items.Command
 				{
 					return true;
 				}
+
 				RegisterPlayer player = slot.Player;
 				if (player == null)
 				{
 					return true;
 				}
-				if (player.GetComponent<PlayerHealth>().IsDead)
+
+				if (player.GetComponent<PlayerHealthV2>().IsDead)
 				{
 					return true;
 				}
-				var checkPlayer = PlayerList.Instance.Get(player.gameObject);
-				if (checkPlayer == null)
+
+				var checkPlayer = PlayerList.Instance.Get(player.gameObject, true);
+				if (checkPlayer.Equals(ConnectedPlayer.Invalid))
 				{
 					return true;
 				}
-				if (!PlayerList.Instance.AntagPlayers.Contains(checkPlayer))
+
+				if (PlayerList.Instance.AntagPlayers.Contains(checkPlayer) == false)
 				{
 					return true;
 				}
@@ -136,7 +142,7 @@ namespace Items.Command
 		private void Teleport()
 		{
 			Vector3 position = new Vector3(Random.Range(bound.xMin, bound.xMax), Random.Range(bound.yMin, bound.yMax), 0);
-			while (MatrixManager.IsSpaceAt(Vector3Int.FloorToInt(position), true) || MatrixManager.IsWallAt(Vector3Int.FloorToInt(position), true))
+			while (MatrixManager.IsSpaceAt(Vector3Int.FloorToInt(position), true) || MatrixManager.IsWallAtAnyMatrix(Vector3Int.FloorToInt(position), true))
 			{
 				position = new Vector3(Random.Range(bound.xMin, bound.xMax), Random.Range(bound.yMin, bound.yMax), 0);
 			}

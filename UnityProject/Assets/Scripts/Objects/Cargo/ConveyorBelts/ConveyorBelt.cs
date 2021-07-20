@@ -71,7 +71,7 @@ namespace Construction.Conveyors
 			if (CurrentStatus == ConveyorStatus.Off) return;
 
 			GetPositionOffset();
-			if (!Matrix.IsPassableAt(registerTile.LocalPositionServer,
+			if (!Matrix.IsPassableAtOneMatrix(registerTile.LocalPositionServer,
 				Vector3Int.RoundToInt(registerTile.LocalPositionServer + position), true)) return;
 
 			foreach (var player in Matrix.Get<PlayerSync>(registerTile.LocalPositionServer, ObjectType.Player, true))
@@ -275,7 +275,7 @@ namespace Construction.Conveyors
 		private void DeconstructBelt()
 		{
 			Spawn.ServerPrefab(CommonPrefabs.Instance.Metal, SpawnDestination.At(gameObject), 5);
-			Despawn.ServerSingle(gameObject);
+			_ = Despawn.ServerSingle(gameObject);
 		}
 
 		private void ChangeDirection()

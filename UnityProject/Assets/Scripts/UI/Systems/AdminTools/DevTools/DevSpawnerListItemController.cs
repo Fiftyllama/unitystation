@@ -1,5 +1,7 @@
 ﻿using System.Collections.Generic;
 using DatabaseAPI;
+using Items;
+using Messages.Client.DevSpawner;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -30,6 +32,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 	private EscapeKeyTarget escapeKeyTarget;
 
 	private LightingSystem lightingSystem;
+	private bool cachedLightingState;
 
 	void Awake()
 	{
@@ -67,7 +70,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 	{
 		if (selectedItem == this)
 		{
-			cursorObject.transform.position = Camera.main.ScreenToWorldPoint(CommonInput.mousePosition);
+			cursorObject.transform.position = MouseUtils.MouseToWorldPos();
 			if (CommonInput.GetMouseButtonDown(0))
 			{
 				//Ignore spawn if pointer is hovering over GUI
@@ -95,7 +98,7 @@ public class DevSpawnerListItemController : MonoBehaviour
 			escapeKeyTarget.enabled = false;
 			selectedItem = null;
 			drawingMessage.SetActive(false);
-			lightingSystem.enabled = true;
+			lightingSystem.enabled = cachedLightingState;
 		}
 	}
 
@@ -115,21 +118,28 @@ public class DevSpawnerListItemController : MonoBehaviour
 			SpriteRenderer curRend = cursorObject.GetComponent<SpriteRenderer>();
 			curRend.sprite = image.sprite;
 
+			curRend.material = prefab.GetComponentInChildren<SpriteRenderer>().sharedMaterial;
+			MaterialPropertyBlock block = new MaterialPropertyBlock();
+			curRend.GetPropertyBlock(block);
 			if (isPaletted)
 			{
-				curRend.material = prefab.GetComponentInChildren<SpriteRenderer>().sharedMaterial;
-				MaterialPropertyBlock block = new MaterialPropertyBlock();
-				curRend.GetPropertyBlock(block);
-				List<Vector4> pal = palette.ConvertAll((Color c) => new Vector4(c.r, c.g, c.b, c.a));
+				Debug.Assert(palette != null, "Palette must not be null on paletteable objects.");
+				List<Vector4> pal = palette.ConvertAll((c) => new Vector4(c.r, c.g, c.b, c.a));
 				block.SetVectorArray("_ColorPalette", pal);
 				block.SetInt("_IsPaletted", 1);
-				curRend.SetPropertyBlock(block);
+				block.SetInt("_PaletteSize", pal.Count);
 			}
+			else
+			{
+				block.SetInt("_IsPaletted", 0);
+			}
+			curRend.SetPropertyBlock(block);
 
 			UIManager.IsMouseInteractionDisabled = true;
 			escapeKeyTarget.enabled = true;
 			selectedItem = this;
 			drawingMessage.SetActive(true);
+			cachedLightingState = lightingSystem.enabled;
 			lightingSystem.enabled = false;
 		}
 	}
@@ -139,25 +149,30 @@ public class DevSpawnerListItemController : MonoBehaviour
 		isPaletted = false;
 		//image.material.SetInt("_IsPaletted", 0);
 
-		ClothingV2 prefabClothing = prefab.GetComponent<ClothingV2>();
-		if (prefabClothing != null)
+		if (prefab.TryGetComponent(out ItemAttributesV2 prefabAttributes))
 		{
-			palette = prefabClothing.GetPaletteOrNull();
-			if (palette != null)
+			ItemsSprites sprites = prefabAttributes.ItemSprites;
+			if (sprites.IsPaletted)
 			{
+				palette = sprites.Palette;
+				Debug.Assert(palette != null, "Palette must not be null on paletteable objects.");
+
 				isPaletted = true;
 				image.material.SetInt("_IsPaletted", 1);
+				image.material.SetInt("_PaletteSize", palette.Count);
 				image.material.SetColorArray("_ColorPalette", palette.ToArray());
 				palette = new List<Color>(image.material.GetColorArray("_ColorPalette"));
 			}
+			else
+			{
+				palette = null;
+			}
 		}
 
-		if (!isPaletted)
+		if (isPaletted == false)
 		{
 			image.material.SetInt("_IsPaletted", 0);
 		}
-
-
 	}
 
 	/// <summary>
@@ -166,13 +181,12 @@ public class DevSpawnerListItemController : MonoBehaviour
 	private void TrySpawn()
 	{
 		Vector3Int position = cursorObject.transform.position.RoundToInt();
-		position.z = 0;
 
 		if (CustomNetworkManager.IsServer)
 		{
 			Spawn.ServerPrefab(prefab, position);
 			UIManager.Instance.adminChatWindows.adminToAdminChat.ServerAddChatRecord(
-				$"{PlayerManager.LocalPlayer.ExpensiveName()} spawned a {prefab.name} at {position}", ServerData.UserID);
+				$"{PlayerManager.LocalPlayer.Player().Username} spawned a {prefab.name} at {position}", ServerData.UserID);
 		}
 		else
 		{

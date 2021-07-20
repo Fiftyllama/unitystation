@@ -1,6 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
 using DatabaseAPI;
+using Messages.Client.Admin;
+using Messages.Server.AdminTools;
 using Mirror;
 using UnityEngine;
 
@@ -138,13 +140,13 @@ namespace AdminTools
 				x.playerNetId == perpId && x.roundTime == roundTimeOfIncident);
 			if (index == -1)
 			{
-				Logger.Log($"Could not find perp id {perpId} with roundTime incident: {roundTimeOfIncident}");
+				Logger.Log($"Could not find perp id {perpId} with roundTime incident: {roundTimeOfIncident}", Category.Admin);
 				return;
 			}
 
 			if (!NetworkIdentity.spawned.ContainsKey(perpId))
 			{
-				Logger.Log($"Perp id {perpId} not found in Spawnlist");
+				Logger.Log($"Perp id {perpId} not found in Spawnlist", Category.Admin);
 				return;
 			}
 
@@ -167,10 +169,10 @@ namespace AdminTools
 
 			var playerScript = perp.GetComponent<PlayerScript>();
 			if (playerScript == null || playerScript.IsGhost || playerScript.playerHealth == null) return;
-
-			UIManager.Instance.adminChatWindows.adminToAdminChat.ServerAddChatRecord($"{admin.ExpensiveName()} BRUTALLY GIBBED player {perp.ExpensiveName()} for a " +
-			                                                                         $"{alertEntry.playerAlertType.ToString()} incident that happened at roundtime: " +
-			                                                                         $"{alertEntry.roundTime}", adminId);
+			ConnectedPlayer perpPlayer = perp.Player();
+			UIManager.Instance.adminChatWindows.adminToAdminChat.ServerAddChatRecord(
+					$"{admin.Player().Username} BRUTALLY GIBBED player {perpPlayer.Name} ({perpPlayer.Username}) for a " +
+			        $"{alertEntry.playerAlertType.ToString()} incident that happened at roundtime: {alertEntry.roundTime}", adminId);
 
 			playerScript.playerHealth.ServerGibPlayer();
 
@@ -186,10 +188,10 @@ namespace AdminTools
 
 			var playerScript = perp.GetComponent<PlayerScript>();
 			if (playerScript == null || playerScript.IsGhost || playerScript.playerHealth == null) return;
-
-			UIManager.Instance.adminChatWindows.adminToAdminChat.ServerAddChatRecord($"{admin.ExpensiveName()} is talking to or monitoring player {perp.ExpensiveName()} for a " +
-			                                                                         $"{alertEntry.playerAlertType.ToString()} incident that happened at roundtime: " +
-			                                                                         $"{alertEntry.roundTime}", adminId);
+			ConnectedPlayer perpPlayer = perp.Player();
+			UIManager.Instance.adminChatWindows.adminToAdminChat.ServerAddChatRecord(
+					$"{admin.Player().Username} is talking to or monitoring player {perpPlayer.Name} ({perpPlayer.Username}) for a " +
+			        $"{alertEntry.playerAlertType.ToString()} incident that happened at roundtime: {alertEntry.roundTime}", adminId);
 
 			alertEntry.takenCareOf = true;
 			ServerSendEntryToAllAdmins(alertEntry);

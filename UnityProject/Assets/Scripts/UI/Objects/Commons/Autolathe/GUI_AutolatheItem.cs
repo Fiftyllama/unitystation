@@ -31,33 +31,45 @@ namespace UI.Objects
 		{
 			if (product == null)
 			{
-				Logger.Log("ExoFab Product not found");
+				Logger.Log("ExoFab Product not found", Category.Machines);
 				return;
 			}
+
 			foreach (var element in Elements)
 			{
-				string nameBeforeIndex = element.name.Split('~')[0];
-				switch (nameBeforeIndex)
+				if (element as NetUIElement<string> != null)
 				{
-					case "ProductName":
-						((NetUIElement<string>)element).SetValueServer(Product.Name);
-						break;
-
-					case "MaterialCost":
-						StringBuilder sb = new StringBuilder();
-						string materialName;
-						string materialPrice;
-						sb.Append("Cost: ");
-						foreach (MaterialSheet material in Product.materialToAmounts.Keys)
-						{
-							materialName = material.displayName;
-							materialPrice = Product.materialToAmounts[material].ToString();
-							sb.Append(materialPrice + " " + materialName + " " + "| ");
-						}
-						((NetUIElement<string>)element).SetValueServer(sb.ToString());
-						break;
+					(element as NetUIElement<string>).SetValueServer(GetName(element));
 				}
 			}
+		}
+
+		private string GetName(NetUIElementBase element)
+		{
+			string nameBeforeIndex = element.name.Split('~')[0];
+
+			if (nameBeforeIndex == "ProductName")
+			{
+				return Product.Name;
+			}
+
+			else if (nameBeforeIndex == "MaterialCost")
+			{
+				StringBuilder sb = new StringBuilder();
+				string materialName;
+				string materialPrice;
+				sb.Append("Cost: ");
+				foreach (MaterialSheet material in Product.materialToAmounts.Keys)
+				{
+					materialName = material.displayName;
+					materialPrice = Product.materialToAmounts[material].ToString();
+					sb.Append(materialPrice + " " + materialName + " " + "| ");
+				}
+
+				return sb.ToString();
+			}
+
+			return default;
 		}
 	}
 }

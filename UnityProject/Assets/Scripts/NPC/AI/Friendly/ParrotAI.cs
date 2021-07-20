@@ -1,8 +1,9 @@
 using System.Collections;
+using Messages.Server;
 using UnityEngine;
 using WebSocketSharp;
 
-namespace NPC
+namespace Systems.MobAIs
 {
 	/// <summary>
 	/// AI brain for parrots
@@ -48,7 +49,7 @@ namespace NPC
 		public override void ExplorePeople(PlayerScript player)
 		{
 			if (player.IsGhost) return;
-			var inventory = player.GetComponent<ItemStorage>();
+			var inventory = player.GetComponent<DynamicItemStorage>();
 			var thingInHand = inventory.GetActiveHandSlot();
 
 			if (thingInHand != null && thingInHand.Item != null)
@@ -73,10 +74,9 @@ namespace NPC
 			//TODO use the actual chat api when it allows it!
 			Chat.AddLocalMsgToChat(
 				text,
-				gameObject.transform.position,
 				gameObject,
-				mobNameCap);
-			ChatBubbleManager.ShowAChatBubble(gameObject.transform, text);
+				MobName);
+			ShowChatBubbleMessage.SendToNearby(gameObject, text);
 		}
 		private void SayRandomThing()
 		{
@@ -103,8 +103,8 @@ namespace NPC
 			string[]  _sounds = {"squawks", "screeches"};
 			Chat.AddActionMsgToChat(
 				gameObject,
-				$"{mobNameCap} {_sounds.PickRandom()}!",
-				$"{mobNameCap} {_sounds.PickRandom()}!");
+				$"{MobName} {_sounds.PickRandom()}!",
+				$"{MobName} {_sounds.PickRandom()}!");
 		}
 
 		protected override void DoRandomAction()

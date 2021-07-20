@@ -1,4 +1,5 @@
 ﻿using System;
+using Messages.Client.Interaction;
 using UnityEngine;
 using Mirror;
 
@@ -70,7 +71,6 @@ namespace Objects
 			}
 			else
 			{
-				Debug.Log($"{this} is rotating transform...");
 				transform.Rotate(0, 0, -90);
 				SyncRotation(zRotation, transform.eulerAngles.z);
 			}

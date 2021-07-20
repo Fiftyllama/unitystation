@@ -1,5 +1,6 @@
 ﻿using System.Collections.Generic;
 using System.Linq;
+using Items;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -72,7 +73,7 @@ public class UI_ItemImage
 		ClearAll();
 		//determine the sprites to display based on the new item
 		var spriteHandlers = item.GetComponentsInChildren<SpriteHandler>(includeInactive: true);
-		spriteHandlers = spriteHandlers.Where(x => x.CurrentSprite != null && x != Highlight.instance.spriteRenderer).ToArray();
+		spriteHandlers = spriteHandlers.Where(x => x != Highlight.instance.spriteRenderer).ToArray();
 
 		foreach (var handler in spriteHandlers)
 		{
@@ -80,22 +81,29 @@ public class UI_ItemImage
 			var image = ConnectFreeImageToHandler(handler);
 
 			// check if handler is hidden
-			image.gameObject.SetActive(!handler.IsHiden);
+			image.gameObject.SetActive(!handler.IsHidden);
 
 			// set sprite
 			var sprite = handler.CurrentSprite;
 			image.sprite = sprite;
 
 			// set color
-			var color = handler.CurrentColor;
-			image.color = color;
+			if (forcedColor != null)
+			{
+				image.color = forcedColor.GetValueOrDefault(Color.white);
+			}
+			else
+			{
+				var color = handler.CurrentColor;
+				image.color = color;
+			}
 
-			// I don't have any idea what is happening here or how to test it
-			// set palleted and color palette
+			// Configure the shader to use palette if item uses it
 			var itemAttrs = item.GetComponent<ItemAttributesV2>();
-			if (itemAttrs.ItemSprites.SpriteInventoryIcon != null && itemAttrs.ItemSprites.IsPaletted)
+			if (itemAttrs.ItemSprites.IsPaletted)
 			{
 				image.material.SetInt("_IsPaletted", 1);
+				image.material.SetInt("_PaletteSize", itemAttrs.ItemSprites.Palette.Count);
 				image.material.SetColorArray("_ColorPalette", itemAttrs.ItemSprites.Palette.ToArray());
 			}
 			else
@@ -116,12 +124,6 @@ public class UI_ItemImage
 						image.color = newColor;
 					}
 				}
-			}
-
-			bool forceColor = color != null;
-			if (forceColor)
-			{
-				image.color = forcedColor.GetValueOrDefault(Color.white);
 			}
 
 			image.enabled = !hidden;
@@ -199,7 +201,7 @@ public class UI_ItemImage
 		rt.localScale = Vector3.one;
 
 		var img = go.AddComponent<Image>();
-		var imgMat = Resources.Load<Material>("Materials/Palettable UI");
+		var imgMat = Resources.Load<Material>("Materials/Maskable Palettable UI");
 		img.material = Object.Instantiate(imgMat);
 		img.alphaHitTestMinimumThreshold = 0.5f;
 
@@ -232,6 +234,7 @@ public class UI_ItemImage
 				if (handler != null)
 				{
 					handler.OnSpriteChanged -= OnHandlerSpriteChanged;
+					handler.OnColorChanged -= OnHandlerColorChanged;
 				}
 
 				handler = value;
@@ -240,11 +243,12 @@ public class UI_ItemImage
 				if (handler)
 				{
 					handler.OnSpriteChanged += OnHandlerSpriteChanged;
+					handler.OnColorChanged += OnHandlerColorChanged;
 				}
 			}
 		}
 
-        private void OnHandlerSpriteChanged(Sprite sprite)
+		private void OnHandlerColorChanged(Color newColor)
 		{
 			if (!UIImage)
 			{
@@ -252,10 +256,26 @@ public class UI_ItemImage
 				// this happens when item is moved in container
 				// and player close this container
 				handler.OnSpriteChanged -= OnHandlerSpriteChanged;
+				handler.OnColorChanged -= OnHandlerColorChanged;
 				return;
 			}
 
-			if (sprite)
+			UIImage.color = newColor;
+		}
+
+		private void OnHandlerSpriteChanged(Sprite sprite)
+		{
+			if (UIImage == false)
+			{
+				// looks like image was deleted from scene
+				// this happens when item is moved in container
+				// and player close this container
+				handler.OnSpriteChanged -= OnHandlerSpriteChanged;
+				handler.OnColorChanged -= OnHandlerColorChanged;
+				return;
+			}
+
+			if (sprite && handler.gameObject.activeInHierarchy)
 			{
 				UIImage.gameObject.SetActive (true);
 				UIImage.sprite = sprite;

@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Systems;
 using Objects.Security;
 
 namespace UI.Objects.Security
@@ -69,9 +70,9 @@ namespace UI.Objects.Security
 			ClosePopup();
 		}
 
-		public void RemoveID()
+		public void RemoveID(ConnectedPlayer player)
 		{
-			securityRecordsTab.RemoveId();
+			securityRecordsTab.RemoveId(player);
 			securityRecordsTab.UpdateIdText(idNameText);
 		}
 
@@ -146,6 +147,9 @@ namespace UI.Objects.Security
 					record.Status = SecurityStatus.Arrest;
 					break;
 				case SecurityStatus.Arrest:
+					record.Status = SecurityStatus.Criminal;
+					break;
+				case SecurityStatus.Criminal:
 					record.Status = SecurityStatus.Parole;
 					break;
 				case SecurityStatus.Parole:
@@ -254,7 +258,7 @@ namespace UI.Objects.Security
 
 		public void DeleteRecord()
 		{
-			SecurityRecordsManager.Instance.SecurityRecords.Remove(record);
+			CrewManifestManager.Instance.SecurityRecords.Remove(record);
 			securityRecordsTab.OpenRecords();
 		}
 

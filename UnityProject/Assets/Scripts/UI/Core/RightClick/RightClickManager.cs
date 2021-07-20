@@ -4,9 +4,14 @@ using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using DatabaseAPI;
+using Doors;
+using Items;
+using Messages.Client.VariableViewer;
+using Objects.Wallmounts;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using Objects.Wallmounts;
+using UI.Core.RightClick;
+using UI;
 
 /// <summary>
 /// Main logic for managing right click behavior.
@@ -19,6 +24,12 @@ using Objects.Wallmounts;
 /// </summary>
 public class RightClickManager : MonoBehaviour
 {
+	public static readonly Color ButtonColor = new Color(0.3f, 0.55f, 0.72f, 0.7f);
+
+	private static readonly BranchWorldPosition BranchWorldPosition = new BranchWorldPosition();
+
+	private static readonly BranchScreenPosition BranchScreenPosition = new BranchScreenPosition();
+
 	[Tooltip("Ordering to use for right click options.")]
 	public RightClickOptionOrder rightClickOptionOrder;
 
@@ -28,7 +39,7 @@ public class RightClickManager : MonoBehaviour
 	/// saved reference to lighting sytem, for checking FOV occlusion
 	private LightingSystem lightingSystem;
 
-	//cached methods attributed with RightClickMethod
+	// cached methods attributed with RightClickMethod
 	private static List<RightClickAttributedComponent> attributedTypes = new List<RightClickAttributedComponent>();
 	private List<RaycastResult> raycastResults = new List<RaycastResult>();
 
@@ -40,9 +51,27 @@ public class RightClickManager : MonoBehaviour
 		public List<MethodInfo> AttributedMethods;
 	}
 
+	[SerializeField]
+	private RightClickMenuController menuControllerPrefab = default;
+
+	private RightClickMenuController menuController;
+
+	public RightClickMenuController MenuController
+	{
+		get
+		{
+			if (menuController == null)
+			{
+				menuController = Instantiate(menuControllerPrefab, transform);
+			}
+
+			return menuController;
+		}
+	}
+
 	private void Awake()
 	{
-		//cache all known usages of the RightClickMethod annotation
+		// cache all known usages of the RightClickMethod annotation
 		if (attributedTypes.Count == 0)
 		{
 			new Task(GetRightClickAttributedMethods).Start();
@@ -88,50 +117,76 @@ public class RightClickManager : MonoBehaviour
 		// Get right mouse click
 		if (CommonInput.GetMouseButtonDown(1))
 		{
-			List<GameObject> objects = null;
-			// Check if mouse point occluded by FoV system.
-			if (!lightingSystem.enabled || lightingSystem.IsScreenPointVisible(CommonInput.mousePosition))
-			{
-				// Gets Items on the position of the mouse that are able to be right clicked
-				objects = GetRightClickableObjects();
-			}
-			else
-			{
-				objects = new List<GameObject>();
-			}
+			var mousePos = CommonInput.mousePosition;
 
-			// Gets UI elements
-			var pointerData = new PointerEventData(EventSystem.current)
-			{
-				pointerId = -1, // Mouse
-				position = CommonInput.mousePosition,
-			};
-			EventSystem.current.RaycastAll(pointerData, raycastResults);
-#pragma warning disable UEA0005 // Ignore warning about using GetComponent() inside Update()
-			// Searching for UI_ItemSwap instead of UI_ItemSlot for the larger and more consistent hitbox.
-			objects.AddRange(raycastResults.Select(rc => {
-				// Verbose workaround since you should not use null propagation on Unity objects. Thanks, Unity.
-				var itemSwap = rc.gameObject.GetComponent<UI_ItemSwap>();
-				var itemSlot = itemSwap == null ? null : itemSwap.GetComponentInChildren<UI_ItemSlot>();
-				return itemSlot == null ? null : itemSlot.ItemObject;
-				}).Where(go => go != null));
-#pragma warning restore UEA0005
-
+			var objects = GetGameObjects(mousePos, out var isUI);
 			//Generates menus
 			var options = Generate(objects);
-			//Logger.Log ("yo", Category.UI);
-			if (options != null && options.Count > 0)
+
+			if (options == null || options.Count <= 0)
 			{
-				RadialMenuSpawner.ins.SpawnRadialMenu(options);
+				return;
 			}
+
+			IBranchPosition branchPosition = BranchScreenPosition.SetPosition(mousePos);
+
+			if (isUI == false)
+			{
+				var tile = objects.Select(o => o.RegisterTile()).FirstOrDefault();
+				if (tile)
+				{
+					branchPosition = BranchWorldPosition.SetTile(tile);
+				}
+			}
+
+			MenuController.SetupMenu(options, branchPosition);
 		}
 	}
 
-	private List<GameObject> GetRightClickableObjects()
+	private List<GameObject> GetGameObjects(Vector3 position, out bool isUI)
 	{
-		Vector3 position = Camera.main.ScreenToWorldPoint(CommonInput.mousePosition);
-		position.z = 0f;
-		List<GameObject> objects = UITileList.GetItemsAtPosition(position);
+		var pointerData = new PointerEventData(EventSystem.current)
+		{
+			pointerId = -1, // Mouse
+			position = position
+		};
+		EventSystem.current.RaycastAll(pointerData, raycastResults);
+
+		isUI = false;
+		foreach (var result in raycastResults)
+		{
+			var go = result.gameObject;
+			var itemSlot = go.GetComponent<UI_ItemSlot>();
+			// Checking if the user has clicked on any ui element, so don't change if it is already true.
+			isUI |= itemSlot != null;
+			// Try searching for UI_ItemSwap instead for the larger hitbox.
+			if (itemSlot == null)
+			{
+				var itemSwap = go.GetComponent<UI_ItemSwap>();
+				itemSlot = itemSwap.OrNull()?.GetComponentInChildren<UI_ItemSlot>();
+				// It doesn't matter if there is anything in the itemSlot, we just need to know if the ItemSwap was clicked on.
+				isUI |= itemSwap != null;
+			}
+			var slotObject = itemSlot.OrNull()?.ItemObject;
+			if (slotObject != null)
+			{
+				return new List<GameObject>{ slotObject };
+			}
+		}
+
+		// If the user has clicked an empty UI element, don't return the items that are underneath the UI.
+		return isUI ? null : GetRightClickableObjects(position);
+	}
+
+	private List<GameObject> GetRightClickableObjects(Vector3 mousePosition)
+	{
+		if (lightingSystem.enabled && !lightingSystem.IsScreenPointVisible(mousePosition))
+		{
+			return null;
+		}
+
+		var position = MouseUtils.MouseToWorldPos();
+		var objects = UITileList.GetItemsAtPosition(position);
 
 		//special case, remove wallmounts that are transparent
 		objects.RemoveAll(IsHiddenWallmount);
@@ -259,20 +314,22 @@ public class RightClickManager : MonoBehaviour
 			}
 		}
 
-		// try get sprite
-		SpriteRenderer firstRenderer = forObject.GetComponentInChildren<SpriteRenderer>();
+		// See if this object has an AirLockAnimator then try to get the sprite from that, otherwise try to get the sprite from the first renderer we find
+		var airLockAnimator = forObject.GetComponentInChildren<AirLockAnimator>();
+		var spriteRenderer = airLockAnimator != null ? airLockAnimator.doorbase : forObject.GetComponentInChildren<SpriteRenderer>();
+
 		Sprite sprite = null;
-		if (firstRenderer != null)
+		if (spriteRenderer != null)
 		{
-			sprite = firstRenderer.sprite;
+			sprite = spriteRenderer.sprite;
 		}
 		else
 		{
 			Logger.LogWarningFormat("Could not determine sprite to use for right click menu" +
 					" for object {0}. Please manually configure a sprite in a RightClickAppearance component" +
-					" on this object.", Category.UI, forObject.name);
+					" on this object.", Category.UserInput, forObject.name);
 		}
 
-		return RightClickMenuItem.CreateObjectMenuItem(Color.gray, sprite, null, label, subMenus, firstRenderer.color, palette);
+		return RightClickMenuItem.CreateObjectMenuItem(ButtonColor, sprite, null, label, subMenus, spriteRenderer.color, palette);
 	}
 }

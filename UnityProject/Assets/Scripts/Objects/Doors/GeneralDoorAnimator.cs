@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using TileManagement;
 using UnityEngine;
 using UnityEngine.Tilemaps;
 using UnityEditor;
@@ -52,22 +53,9 @@ namespace Doors
 			tileChangeManager = GetComponentInParent<TileChangeManager>();
 		}
 
-		public void Start()
-		{
-			//Call doorController after awake so it has a chance to init
-			if (doorController.IsClosed)
-			{
-				doorbase.sprite = sprites[closeFrame + (int)direction];
-			}
-			else
-			{
-				doorbase.sprite = sprites[openFrame + (int)direction];
-			}
-		}
-
 		public override void OpenDoor(bool skipAnimation)
 		{
-			if (!skipAnimation)
+			if (skipAnimation == false)
 			{
 				doorController.isPerformingAction = true;
 				doorController.PlayOpenSound();
@@ -79,7 +67,7 @@ namespace Doors
 
 		public override void CloseDoor(bool skipAnimation)
 		{
-			if (!skipAnimation)
+			if (skipAnimation == false)
 			{
 				doorController.isPerformingAction = true;
 				doorController.PlayCloseSound();
@@ -90,13 +78,13 @@ namespace Doors
 
 		public override void AccessDenied(bool skipAnimation)
 		{
-			if (skipAnimation || !IncludeAccessDeniedAnim)
+			if (skipAnimation || IncludeAccessDeniedAnim == false)
 			{
 				return;
 			}
 
 			doorController.isPerformingAction = true;
-			SoundManager.PlayAtPosition("AccessDenied", transform.position, gameObject);
+			_ = SoundManager.PlayAtPosition(SingletonSOSounds.Instance.AccessDenied, transform.position, gameObject);
 			StartCoroutine(PlayDeniedAnim());
 		}
 
@@ -193,7 +181,7 @@ namespace Doors
 			{
 				doorbase.sprite = sprites[closeFrame + (int)direction];
 			}
-			doorController.OnAnimationFinished();
+			doorController.OnAnimationFinished(isClosing: true);
 		}
 
 		private IEnumerator PlayOpenAnim(bool skipAnimation)
@@ -229,7 +217,7 @@ namespace Doors
 			bool light = false;
 			for (int i = 0; i < animLength * 2; i++)
 			{
-				if (!light)
+				if (light == false)
 				{
 					doorbase.sprite = sprites[deniedFrame + (int)direction];
 				}

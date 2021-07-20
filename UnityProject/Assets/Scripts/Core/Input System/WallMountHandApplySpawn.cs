@@ -1,7 +1,10 @@
-﻿using System.Collections;
+﻿using Objects.Construction;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using Systems.Electricity;
 
+// TODO: namespace me
 public class WallMountHandApplySpawn : MonoBehaviour, ICheckedInteractable<PositionalHandApply>
 {
 	public GameObject WallMountToSpawn;
@@ -20,11 +23,11 @@ public class WallMountHandApplySpawn : MonoBehaviour, ICheckedInteractable<Posit
 	{
 		var roundTargetWorldPosition = interaction.WorldPositionTarget.RoundToInt();
 		MatrixInfo matrix = MatrixManager.AtPoint(roundTargetWorldPosition, true);
-		if (matrix.Matrix == null)
+		if (matrix?.Matrix == null)
 		{
 			return;
 		}
-		if (!MatrixManager.IsWallAt(roundTargetWorldPosition, true))
+		if (!MatrixManager.IsWallAtAnyMatrix(roundTargetWorldPosition, true))
 		{
 			return;
 		}
@@ -34,7 +37,7 @@ public class WallMountHandApplySpawn : MonoBehaviour, ICheckedInteractable<Posit
 
 		//is there a wall in the direction of the new wallmount? taking into account diagonal clicking
 		var tileInFront = roundTargetWorldPosition + new Vector3Int(PlaceDirection.x, 0, 0);
-		if (!MatrixManager.IsWallAt(tileInFront, true))
+		if (!MatrixManager.IsWallAtAnyMatrix(tileInFront, true))
 		{
 			if (PlaceDirection.x > 0)
 			{
@@ -48,7 +51,7 @@ public class WallMountHandApplySpawn : MonoBehaviour, ICheckedInteractable<Posit
 		else
 		{
 			tileInFront = roundTargetWorldPosition + new Vector3Int(0, PlaceDirection.y, 0);
-			if (!MatrixManager.IsWallAt(tileInFront, true))
+			if (!MatrixManager.IsWallAtAnyMatrix(tileInFront, true))
 			{
 				if (PlaceDirection.y > 0)
 				{
@@ -86,7 +89,14 @@ public class WallMountHandApplySpawn : MonoBehaviour, ICheckedInteractable<Posit
 		}
 		GameObject WallMount = Spawn.ServerPrefab(WallMountToSpawn, roundTargetWorldPosition,  interaction.Performer.transform.parent, spawnItems: false).GameObject;
 		var Directional = WallMount.GetComponent<Directional>();
-		Directional.FaceDirection(Orientation.FromEnum(FaceDirection));
+		if (Directional != null) Directional.FaceDirection(Orientation.FromEnum(FaceDirection));
+
 		Inventory.ServerConsume(interaction.HandSlot, 1);
+
+		var construction = WallMount.GetComponent<LightFixtureConstruction>();
+		if(construction!= null)
+		{
+			construction.ServerSetState(LightFixtureConstruction.State.initial);
+		}
 	}
 }

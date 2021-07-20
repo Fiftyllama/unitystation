@@ -200,12 +200,12 @@ public class KeyboardInputManager : MonoBehaviour
 		{ KeyAction.ActionDrop,		() => {	UIManager.Action.Drop(); }},
 		{ KeyAction.ActionResist,	() => { UIManager.Action.Resist(); }},
 		{ KeyAction.ActionStopPull, () => { UIManager.Action.StopPulling(); }},
-		{ KeyAction.ToggleWalkRun,   () => { UIManager.WalkRun.RunWalk(); }},
+		{ KeyAction.ToggleWalkRun,   () => { UIManager.Intent.OnClickRunWalk(); }},
 
 		{  KeyAction.Point, 		() => { MouseInputController.Point(); }},
-		{  KeyAction.HandSwap, 		() => { UIManager.Hands.Swap(); }},
-		{  KeyAction.HandActivate,	() => { UIManager.Hands.Activate(); }},
-		{  KeyAction.HandEquip, 	() => { UIManager.Hands.Equip(); }},
+		{  KeyAction.HandSwap, 		() => { HandsController.SwapHand(); }},
+		{  KeyAction.HandActivate,	() => { HandsController.Activate(); }},
+		{  KeyAction.HandEquip, 	() => {  HandsController.Equip(); }},
 
 		// Intents
 		{ KeyAction.IntentLeft,		() => { UIManager.Intent.CycleIntent(true); }},
@@ -220,14 +220,25 @@ public class KeyboardInputManager : MonoBehaviour
 		{ KeyAction.ChatRadio,		() => { ChatUI.Instance.OpenChatWindow(ChatChannel.Common); }},
 		{ KeyAction.ChatOOC,		() => { ChatUI.Instance.OpenChatWindow(ChatChannel.OOC); }},
 		{ KeyAction.ToggleAHelp,    () => { ChatUI.Instance.OnAdminHelpButton(); }},
+		{ KeyAction.ToggleMHelp,    () => { ChatUI.Instance.OnMentorHelpButton(); }},
 
 		// Body part selection
-		{ KeyAction.TargetHead,		() => { UIManager.ZoneSelector.CycleHead(); }},
-		{ KeyAction.TargetChest,	() => { UIManager.ZoneSelector.SelectAction(BodyPartType.Chest); }},
-		{ KeyAction.TargetLeftArm,  () => { UIManager.ZoneSelector.SelectAction(BodyPartType.LeftArm); }},
-		{ KeyAction.TargetRightArm, () => { UIManager.ZoneSelector.SelectAction(BodyPartType.RightArm); }},
-		{ KeyAction.TargetLeftLeg,  () => { UIManager.ZoneSelector.SelectAction(BodyPartType.LeftLeg); }},
-		{ KeyAction.TargetRightLeg, () => { UIManager.ZoneSelector.SelectAction(BodyPartType.RightLeg); }},
-		{ KeyAction.TargetGroin, 	() => { UIManager.ZoneSelector.SelectAction(BodyPartType.Groin); }}
+		{ KeyAction.TargetHead,		() => { UIManager.ZoneSelector.CycleZones(BodyPartType.Head, BodyPartType.Eyes, BodyPartType.Mouth); }},
+		{ KeyAction.TargetChest,	() => { UIManager.ZoneSelector.CycleZones(BodyPartType.Chest, BodyPartType.Groin); }},
+		{ KeyAction.TargetLeftArm,  () => { UIManager.ZoneSelector.CycleZones(BodyPartType.LeftArm, BodyPartType.LeftHand); }},
+		{ KeyAction.TargetRightArm, () => { UIManager.ZoneSelector.CycleZones(BodyPartType.RightArm, BodyPartType.RightHand); }},
+		{ KeyAction.TargetLeftLeg,  () => { UIManager.ZoneSelector.CycleZones(BodyPartType.LeftLeg, BodyPartType.LeftFoot); }},
+		{ KeyAction.TargetRightLeg, () => { UIManager.ZoneSelector.CycleZones(BodyPartType.RightLeg, BodyPartType.RightFoot); }},
+		//{ KeyAction.TargetGroin, 	() => { UIManager.ZoneSelector.CycleZone(BodyPartType.Groin); }},
+
+		// UI
+		//{ KeyAction.OpenBackpack, 	() => { UIManager.Instance.panelHudBottomController.backpackItemSlot.TryItemInteract(swapIfEmpty: false); }},
+		{ KeyAction.OpenBackpack, 	() => { PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.back, false); }},
+		{ KeyAction.OpenPDA, 		() => { PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.id, false); }},
+		{ KeyAction.OpenBelt, 		() => {  PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.belt, false);}},
+
+		{ KeyAction.PocketOne, 		() => { PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.storage01);}},
+		{ KeyAction.PocketTwo, 		() => { PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.storage02);}},
+		{ KeyAction.PocketThree, 	() => { PlayerManager.LocalPlayerScript.DynamicItemStorage.TryItemInteract(NamedSlot.suitStorage); }}
 	};
 }

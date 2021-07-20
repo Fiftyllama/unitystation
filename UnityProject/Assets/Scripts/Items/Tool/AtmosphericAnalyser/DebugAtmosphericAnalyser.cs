@@ -18,7 +18,6 @@ namespace Pipes
 			MatrixInfo matrixinfo = MatrixManager.AtPoint(worldPosInt, true);
 			var localPosInt = MatrixManager.WorldToLocalInt(worldPosInt, matrixinfo);
 			var matrix = interaction.Performer.GetComponentInParent<Matrix>();
-			var MetaDataNode = matrix.GetMetaDataNode(localPosInt);
 
 			string toShow = "";
 			foreach (var pipeNode in matrix.GetPipeConnections(localPosInt))
@@ -26,8 +25,8 @@ namespace Pipes
 				toShow += pipeNode.ToString() + "\n";
 			}
 
-
 			Chat.AddExamineMsgFromServer(interaction.Performer, toShow);
+			Logger.Log(toShow);
 		}
 	}
 }

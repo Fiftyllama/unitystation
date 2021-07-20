@@ -2,6 +2,7 @@
 using UnityEngine;
 using Mirror;
 using System;
+using Items;
 
 namespace Doors
 {
@@ -59,9 +60,11 @@ namespace Doors
 		{
 			this.interaction = interaction;
 
-			if (Validations.HasItemTrait(interaction.HandObject, CommonTraits.Instance.Emag))
+			if (Validations.HasItemTrait(interaction.HandObject, CommonTraits.Instance.Emag)
+				&& interaction.HandObject.TryGetComponent<Emag>(out var emag)
+				&& emag.EmagHasCharges())
 			{
-				TryEmag();
+				TryEmag(emag, interaction);
 			}
 			else if (Validations.HasItemTrait(interaction.HandObject, CommonTraits.Instance.Crowbar))
 			{
@@ -99,13 +102,14 @@ namespace Doors
 			Controller.MobTryOpen(performer);
 		}
 
-		public void TryEmag()
+		public void TryEmag(Emag emag, HandApply interaction)
 		{
 			if (Controller == null) return;
 
 			if (Controller.IsClosed)
 			{
 				Controller.isEmagged = true;
+				emag.UseCharge(interaction);
 				TryOpen(interaction.Performer);
 			}
 		}
@@ -120,7 +124,7 @@ namespace Doors
 				ToolUtils.ServerUseToolWithActionMessages(interaction, 4.5f,
 				"You start prying open the door...",
 				$"{interaction.Performer.ExpensiveName()} starts prying open the door...",
-				$"You force the door open with your {gameObject.ExpensiveName()}!",
+				$"You force the door open with your {interaction.HandObject.ExpensiveName()}!",
 				$"{interaction.Performer.ExpensiveName()} forces the door open!",
 				() =>
 				{

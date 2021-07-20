@@ -1,4 +1,5 @@
 ﻿using System;
+using HealthV2;
 using ScriptableObjects.Gun;
 using UnityEngine;
 
@@ -23,30 +24,49 @@ namespace Weapons.Projectiles.Behaviours
 			this.targetZone = targetZone;
 		}
 
-		public bool OnHit(RaycastHit2D hit)
+		public bool OnHit(MatrixManager.CustomPhysicsHit  hit)
 		{
 			return TryDamage(hit);
 		}
 
-		private bool TryDamage(RaycastHit2D hit)
+		private bool TryDamage(MatrixManager.CustomPhysicsHit  hit)
 		{
-			var coll = hit.collider;
+			var coll = hit.CollisionHit.GameObject;
+			if (coll == null) return true;
+			//TODO REMOVE AFTER CHANGING MOBS OVER TO NEW HEALTH
 			var livingHealth = coll.GetComponent<LivingHealthBehaviour>();
-			if (livingHealth == null)
+			var health = coll.GetComponent<LivingHealthMasterBase>();
+			if (livingHealth == null && health == null)
 			{
 				return false;
 			}
 
 			var newDamage = projectileKineticDamage.DamageByPressureModifier(damageData.Damage);
 
-			livingHealth.ApplyDamageToBodypart(shooter, newDamage, damageData.AttackType, damageData.DamageType, targetZone);
+			//TODO REMOVE AFTER CHANGING MOBS OVER TO NEW HEALTH
+			if (livingHealth != null)
+			{
+				livingHealth.ApplyDamageToBodyPart(shooter, newDamage, damageData.AttackType, damageData.DamageType, targetZone);
+
+				Chat.AddThrowHitMsgToChat(gameObject, coll.gameObject, targetZone);
+
+				Logger.LogTraceFormat(
+					"Hit {0} for {1} with HealthBehaviour! bullet absorbed",
+					Category.Firearms,
+					livingHealth.gameObject.name,
+					newDamage);
+
+				return true;
+			}
+
+			health.ApplyDamageToBodyPart(shooter, newDamage, damageData.AttackType, damageData.DamageType, targetZone);
 
 			Chat.AddThrowHitMsgToChat(gameObject, coll.gameObject, targetZone);
 
 			Logger.LogTraceFormat(
 				"Hit {0} for {1} with HealthBehaviour! bullet absorbed",
 				Category.Firearms,
-				livingHealth.gameObject.name,
+				health.gameObject.name,
 				newDamage);
 
 			return true;

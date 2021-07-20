@@ -1,12 +1,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using Core.Input_System.InteractionV2.Interactions;
 using Mirror;
 using ScriptableObjects;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
 using Doors;
+using Managers;
 
 namespace Objects.Wallmounts
 {
@@ -15,7 +17,7 @@ namespace Objects.Wallmounts
 	/// Escape Shuttle channel is a priority one and will overtake other channels.
 	/// </summary>
 	public class StatusDisplay : NetworkBehaviour, IServerLifecycle, ICheckedInteractable<HandApply>, ISetMultitoolMaster,
-			IRightClickable, ICheckedInteractable<ContextMenuApply>
+			IRightClickable, ICheckedInteractable<ContextMenuApply>, ICheckedInteractable<AiActivate>
 	{
 		public static readonly int MAX_CHARS_PER_PAGE = 18;
 
@@ -58,6 +60,19 @@ namespace Objects.Wallmounts
 		private bool multiMaster = true;
 		public bool MultiMaster => multiMaster;
 
+		private AccessRestrictions accessRestrictions;
+		public AccessRestrictions AccessRestrictions
+		{
+			get
+			{
+				if (accessRestrictions == null)
+				{
+					accessRestrictions = GetComponent<AccessRestrictions>();
+				}
+				return accessRestrictions;
+			}
+		}
+
 		public void AddSlave(object SlaveObject)
 		{
 		}
@@ -92,6 +107,11 @@ namespace Objects.Wallmounts
 			centComm.OnStatusDisplayUpdate.AddListener(OnTextBroadcastReceived);
 		}
 
+		private void Start()
+		{
+			centComm = GameManager.Instance.CentComm;
+		}
+
 		/// <summary>
 		/// cleaning up for reuse
 		/// </summary>
@@ -109,12 +129,16 @@ namespace Objects.Wallmounts
 		/// </summary>
 		private void SyncStatusText(string oldText, string newText)
 		{
-			//display font doesn't have lowercase chars!
-			statusText = newText.ToUpper().Substring(0, Mathf.Min(newText.Length, MAX_CHARS_PER_PAGE * 2));
+			if (newText != null)
+			{
+				//display font doesn't have lowercase chars!
+				statusText = newText.ToUpper().Substring(0, Mathf.Min(newText.Length, MAX_CHARS_PER_PAGE * 2));
+			}
+
 
 			if (!textField)
 			{
-				Logger.LogErrorFormat("text field not found for status display {0}", Category.Telecoms, this);
+				Logger.LogErrorFormat("text field not found for status display {0}", Category.Chat, this);
 				return;
 			}
 			if (stateSync == MountedMonitorState.StatusText)
@@ -228,20 +252,30 @@ namespace Objects.Wallmounts
 				{
 					if (channel == StatusDisplayChannel.DoorTimer)
 					{
-						currentTimerSeconds += 60;
-						if (currentTimerSeconds > 600)
+						if (AccessRestrictions == null || AccessRestrictions.CheckAccess(interaction.Performer))
 						{
-							currentTimerSeconds = 1;
-						}
+							currentTimerSeconds += 60;
+							if (currentTimerSeconds > 600)
+							{
+								currentTimerSeconds = 1;
+							}
 
-						if (!countingDown)
-						{
-							StartCoroutine(TickTimer());
+							if (countingDown == false)
+							{
+								StartCoroutine(TickTimer());
+							}
+							else
+							{
+								OnTextBroadcastReceived(StatusDisplayChannel.DoorTimer);
+							}
 						}
 						else
 						{
-							OnTextBroadcastReceived(StatusDisplayChannel.DoorTimer);
+							Chat.AddExamineMsg(interaction.Performer, $"Access Denied.");
+							// Play sound
+							SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.AccessDenied, gameObject.AssumedWorldPosServer(), sourceObj: gameObject);
 						}
+
 					}
 					else
 					{
@@ -417,7 +451,16 @@ namespace Objects.Wallmounts
 
 		private void ContextMenuOptionClicked(ContextMenuApply interaction)
 		{
-			InteractionUtils.RequestInteract(interaction, this);
+			if (!AccessRestrictions || AccessRestrictions.CheckAccess(interaction.Performer))
+			{
+				InteractionUtils.RequestInteract(interaction, this);
+			}
+			else
+			{
+				Chat.AddExamineMsg(interaction.Performer, $"Access Denied.");
+				// Play sound
+				SoundManager.PlayNetworkedAtPos(SingletonSOSounds.Instance.AccessDenied, gameObject.AssumedWorldPosServer(), sourceObj: gameObject);
+			}
 		}
 
 		public bool WillInteract(ContextMenuApply interaction, NetworkSide side)
@@ -450,6 +493,46 @@ namespace Objects.Wallmounts
 		}
 
 		#endregion Interaction-ContextMenu
+
+		#region Ai Interaction
+
+		public bool WillInteract(AiActivate interaction, NetworkSide side)
+		{
+			if (DefaultWillInteract.AiActivate(interaction, side) == false) return false;
+
+			return true;
+		}
+
+		public void ServerPerformInteraction(AiActivate interaction)
+		{
+			switch (interaction.ClickType)
+			{
+				//StopTimer
+				case AiActivate.ClickTypes.CtrlClick:
+					currentTimerSeconds = 0;
+					break;
+				//AddTime
+				case AiActivate.ClickTypes.NormalClick:
+					if (!countingDown)
+					{
+						StartCoroutine(TickTimer());
+					}
+					currentTimerSeconds += 60;
+					break;
+				//RemoveTime
+				case AiActivate.ClickTypes.ShiftClick:
+					currentTimerSeconds -= 60;
+					if (currentTimerSeconds < 0)
+					{
+						currentTimerSeconds = 0;
+					}
+					break;
+				default:
+					break;
+			}
+		}
+
+		#endregion
 	}
 
 	public enum StatusDisplayChannel

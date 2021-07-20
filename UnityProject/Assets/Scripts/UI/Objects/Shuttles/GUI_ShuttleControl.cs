@@ -5,6 +5,8 @@ using UnityEngine;
 using UnityEngine.UI;
 using Objects.Shuttles;
 using Objects.Command;
+using Systems.MobAIs;
+using Map;
 
 namespace UI.Objects.Shuttles
 {
@@ -142,7 +144,7 @@ namespace UI.Objects.Shuttles
 		private void AddEmagItems()
 		{
 			EntryList.AddItems(MapIconType.Human, GetObjectsOf<PlayerScript>(player => !player.IsDeadOrGhost));
-			EntryList.AddItems(MapIconType.Ian, GetObjectsOf<NPC.CorgiAI>());
+			EntryList.AddItems(MapIconType.Ian, GetObjectsOf<CorgiAI>());
 			EntryList.AddItems(MapIconType.Nuke, GetObjectsOf<Nuke>());
 
 			RescanElements();
@@ -446,7 +448,7 @@ namespace UI.Objects.Shuttles
 		{
 			if (MatrixMove == null)
 			{
-				Logger.LogWarning("Matrix move is missing for some reason on this shuttle", Category.Matrix);
+				Logger.LogWarning("Matrix move is missing for some reason on this shuttle", Category.Shuttles);
 				return;
 			}
 			float speed = speedMultiplier * (MatrixMove.MaxSpeed - 1) + 1;

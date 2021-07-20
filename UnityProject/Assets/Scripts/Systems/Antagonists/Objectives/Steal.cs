@@ -8,7 +8,7 @@ namespace Antagonists
 	/// <summary>
 	/// An objective to steal items from the station
 	/// </summary>
-	[CreateAssetMenu(menuName="ScriptableObjects/Objectives/Steal")]
+	[CreateAssetMenu(menuName="ScriptableObjects/AntagObjectives/Steal")]
 	public class Steal : Objective
 	{
 		/// <summary>
@@ -28,14 +28,9 @@ namespace Antagonists
 		private int Amount;
 
 		/// <summary>
-		/// The amount that has been found by the completion check so far.
-		/// </summary>
-		private int CheckAmount = 0;
-
-		/// <summary>
 		/// Make sure there's at least one item which hasn't been targeted
 		/// </summary>
-		public override bool IsPossible(PlayerScript candidate)
+		protected override bool IsPossibleInternal(PlayerScript candidate)
 		{
 			// Get all items from the item pool which haven't been targeted already
 			int itemCount = ItemPool.Where( itemDict =>
@@ -65,7 +60,7 @@ namespace Antagonists
 			if (itemEntry.Key == null)
 			{
 				Logger.LogError($"Objective steal item target failed because the item chosen is somehow destroyed." +
-				                " Definitely a programming bug. ", Category.Round);
+				                " Definitely a programming bug. ", Category.Antags);
 				return;
 			}
 			ItemName = itemEntry.Key.Item().InitialName;
@@ -74,7 +69,7 @@ namespace Antagonists
 			{
 				Logger.LogError($"Objective steal item target failed because the InitialName has not been" +
 				                $" set on this objects ItemAttributes. " +
-				                $"Item: {itemEntry.Key.Item().gameObject.name}", Category.Round);
+				                $"Item: {itemEntry.Key.Item().gameObject.name}", Category.Antags);
 				return;
 			}
 			Amount = itemEntry.Value;
@@ -83,61 +78,9 @@ namespace Antagonists
 			description = $"Steal {Amount} {ItemName}";
 		}
 
-		/// <summary>
-		/// Checks through all the storage recursively
-		/// </summary>
 		protected override bool CheckCompletion()
 		{
-			return CheckStorage(Owner.body.ItemStorage);
-		}
-
-		private bool CheckStorage(ItemStorage itemStorage)
-		{
-			foreach (var slot in itemStorage.GetItemSlots())
-			{
-				if (CheckSlot(slot))
-				{
-					return true;
-				}
-			}
-
-			return false;
-		}
-
-		private bool CheckSlot(ItemSlot slot)
-		{
-			if (slot.ItemObject == null) return false;
-
-			//Check if current Item is the one we need
-			if (slot.ItemObject.GetComponent<ItemAttributesV2>()?.InitialName == ItemName)
-			{
-				//If stackable count stack
-				if (slot.ItemObject.TryGetComponent<Stackable>(out var stackable))
-				{
-					CheckAmount += stackable.Amount;
-				}
-				else
-				{
-					CheckAmount++;
-				}
-
-				//Check to see if count has been passed
-				if (CheckAmount >= Amount)
-				{
-					return true;
-				}
-			}
-
-			//Check to see if this item has storage, and do checks on that
-			if (slot.ItemObject.TryGetComponent<ItemStorage>(out var itemStorage))
-			{
-				if (CheckStorage(itemStorage))
-				{
-					return true;
-				}
-			}
-
-			return false;
+			return CheckStorageFor(ItemName, Amount);
 		}
 	}
 }
